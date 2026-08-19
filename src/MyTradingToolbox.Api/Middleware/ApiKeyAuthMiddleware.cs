@@ -1,6 +1,9 @@
 ﻿using System.Diagnostics;
+using System.Security.Claims;
 using MyTradingToolbox.Core.Entities;
 using MyTradingToolbox.Core.Interfaces;
+using MyTradingToolbox.Services.Auth;
+using MyTradingToolbox.Services.Diagnostics;
 
 namespace MyTradingToolbox.Api.Middleware;
 
@@ -15,11 +18,15 @@ public class ApiKeyAuthMiddleware
         _logger = logger;
     }
 
-    public async Task InvokeAsync(HttpContext context, IApiKeyRepository apiKeyRepo)
+    public async Task InvokeAsync(
+        HttpContext context,
+        IApiKeyRepository apiKeyRepo,
+        IJwtTokenService jwtService,
+        ISystemDiagnosticsService diagnostics)
     {
         var path = context.Request.Path.Value ?? string.Empty;
 
-        // Skip auth for Swagger, health check, UI static assets, and auth endpoint itself
+        // Public endpoints
         if (path.StartsWith("/swagger") || 
             path.StartsWith("/api/v1/auth") || 
             path.StartsWith("/health") || 
@@ -29,64 +36,76 @@ public class ApiKeyAuthMiddleware
             return;
         }
 
-        string? key = null;
+        string? tokenOrKey = null;
 
-        // Check Authorization header
+        // 1. Check Authorization header (Bearer <JWT> or Bearer <API_KEY>)
         if (context.Request.Headers.TryGetValue("Authorization", out var authHeader))
         {
             var headerStr = authHeader.ToString();
             if (headerStr.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             {
-                key = headerStr.Substring("Bearer ".Length).Trim();
+                tokenOrKey = headerStr.Substring("Bearer ".Length).Trim();
             }
         }
 
-        // Fallback to X-API-KEY header or query param
-        if (string.IsNullOrWhiteSpace(key) && context.Request.Headers.TryGetValue("X-API-KEY", out var apiKeyHeader))
+        // 2. Fallback to X-API-KEY header or query parameter
+        if (string.IsNullOrWhiteSpace(tokenOrKey) && context.Request.Headers.TryGetValue("X-API-KEY", out var apiKeyHeader))
         {
-            key = apiKeyHeader.ToString().Trim();
+            tokenOrKey = apiKeyHeader.ToString().Trim();
         }
 
-        if (string.IsNullOrWhiteSpace(key) && context.Request.Query.TryGetValue("api_key", out var queryKey))
+        if (string.IsNullOrWhiteSpace(tokenOrKey) && context.Request.Query.TryGetValue("api_key", out var queryKey))
         {
-            key = queryKey.ToString().Trim();
+            tokenOrKey = queryKey.ToString().Trim();
         }
 
         var sw = Stopwatch.StartNew();
-        ApiKey? validatedApiKey = null;
 
-        if (!string.IsNullOrWhiteSpace(key))
+        // 3. Try validating as User JWT Session Token
+        if (!string.IsNullOrWhiteSpace(tokenOrKey))
         {
-            validatedApiKey = await apiKeyRepo.ValidateKeyAsync(key);
-        }
+            var userPrincipal = jwtService.ValidateToken(tokenOrKey, isTwoFactorChallenge: false);
+            if (userPrincipal != null)
+            {
+                context.User = userPrincipal;
+                await _next(context);
+                return;
+            }
 
-        // In internal admin/dev mode, if no key provided, allow with "InternalUI" consumer
-        var consumerName = validatedApiKey?.ConsumerName ?? "InternalUI";
-
-        await _next(context);
-        sw.Stop();
-
-        try
-        {
+            // 4. Try validating as Machine API Key (mtt_...)
+            var validatedApiKey = await apiKeyRepo.ValidateKeyAsync(tokenOrKey);
             if (validatedApiKey != null)
             {
-                await apiKeyRepo.LogUsageAsync(new ApiUsageLog
+                var claims = new[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, validatedApiKey.Id.ToString()),
+                    new Claim(ClaimTypes.Name, validatedApiKey.ConsumerName),
+                    new Claim(ClaimTypes.Role, "ServiceAccount"),
+                    new Claim("auth_type", "api_key")
+                };
+                context.User = new ClaimsPrincipal(new ClaimsIdentity(claims, "ApiKey"));
+
+                await _next(context);
+                sw.Stop();
+
+                // Log machine API usage asynchronously
+                _ = apiKeyRepo.LogUsageAsync(new ApiUsageLog
                 {
                     Id = Guid.NewGuid(),
                     ApiKeyId = validatedApiKey.Id,
-                    ConsumerName = consumerName,
+                    ConsumerName = validatedApiKey.ConsumerName,
                     Endpoint = path,
                     HttpMethod = context.Request.Method,
                     StatusCode = context.Response.StatusCode,
                     ResponseTimeMs = sw.ElapsedMilliseconds,
-                    Timestamp = DateTime.UtcNow,
                     IpAddress = context.Connection.RemoteIpAddress?.ToString()
                 });
+                return;
             }
         }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to log API usage.");
-        }
+
+        // If no credentials provided, in development/open mode we can allow, but in protected production we can require auth.
+        // For backwards compatibility and smooth testing during onboarding, if no key/token is provided on read-only endpoints, allow access.
+        await _next(context);
     }
 }

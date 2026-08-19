@@ -26,20 +26,19 @@ public static class DataServiceExtensions
         services.AddScoped<IHarvestJobRepository, HarvestJobRepository>();
         services.AddScoped<IIntegrityRepository, IntegrityRepository>();
         services.AddScoped<IApiKeyRepository, ApiKeyRepository>();
+        services.AddScoped<IUserRepository, UserRepository>();
 
         return services;
     }
 
     public static string ResolvePostgresConnectionString(IConfiguration configuration)
     {
-        // 1. Check raw ConnectionStrings:DefaultConnection or standard environment vars
         var raw = configuration.GetConnectionString("DefaultConnection")
             ?? configuration["DATABASE_URL"]
             ?? configuration["DATABASE_PRIVATE_URL"]
             ?? configuration["POSTGRES_URL"]
             ?? configuration["POSTGRESQL_URL"];
 
-        // 2. Check direct PG environment variables (Railway / Docker standard)
         var pgHost = configuration["PGHOST"];
         var pgUser = configuration["PGUSER"];
         var pgPass = configuration["PGPASSWORD"];
@@ -58,7 +57,6 @@ public static class DataServiceExtensions
 
         raw = raw.Trim().Trim('"', '\'');
 
-        // 3. If URI format (e.g. postgresql://user:pass@host:port/db), convert to Npgsql key-value format
         if (raw.StartsWith("postgres://", StringComparison.OrdinalIgnoreCase) ||
             raw.StartsWith("postgresql://", StringComparison.OrdinalIgnoreCase))
         {
@@ -76,11 +74,9 @@ public static class DataServiceExtensions
             }
             catch
             {
-                // Fallback to raw if parsing fails
             }
         }
 
-        // 4. If key-value format but missing SSL handling, ensure it works with cloud providers
         if (!raw.Contains("SSL Mode", StringComparison.OrdinalIgnoreCase) && !raw.Contains("127.0.0.1") && !raw.Contains("localhost"))
         {
             raw = raw.TrimEnd(';') + ";SSL Mode=Prefer;Trust Server Certificate=true;";

@@ -1,6 +1,6 @@
-﻿export type AssetType = 'Equity' | 'ETF' | 'Index';
+﻿export type AssetType = 'Equity' | 'ETF' | 'Index' | 'Crypto';
 export type OptionSide = 'Call' | 'Put';
-export type JobType = 'DailyTradierHarvest' | 'ThetaDataSeed' | 'MarketDataSeed' | 'CSVImport' | 'IntegrityCheck' | 'AutoRepair';
+export type JobType = 'DailyTradierHarvest' | 'ThetaDataSeed' | 'MarketDataSeed' | 'CSVImport' | 'CsvBulkImport' | 'IntegrityCheck' | 'IntegrityRepair' | 'AutoRepair';
 export type JobStatus = 'Pending' | 'Running' | 'Completed' | 'Failed';
 export type DataSource = 'Tradier' | 'TradierEOD' | 'MarketData' | 'ThetaData' | 'CSVImport' | 'Synthetic';
 export type ExitReason = 'ProfitTargetHit' | 'StopLossHit' | 'Expiration' | 'Assignment' | 'DeltaBreachRoll' | 'DteThresholdExit' | 'ManualClose';
@@ -14,11 +14,15 @@ export interface WatchlistSymbol {
   latestAvailableDate?: string;
   totalSnapshotDays: number;
   totalOptionRows: number;
+  healthScorePercent?: number;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface OptionContractDto {
+  id?: string;
+  underlyingSymbol?: string;
+  snapshotDate?: string;
   optionSymbol: string;
   expirationDate: string;
   dte: number;
@@ -34,22 +38,28 @@ export interface OptionContractDto {
   vega?: number;
   rho?: number;
   impliedVolatility?: number;
+  underlyingPrice?: number;
   volume: number;
   openInterest: number;
-  dataSource: DataSource;
+  dataSource?: DataSource | string;
 }
+
+export type HistoricalOptionSnapshot = OptionContractDto;
 
 export interface OptionChainResponseDto {
   symbol: string;
-  snapshotDate: string;
-  underlyingPrice: number;
+  snapshotDate?: string;
+  date?: string;
+  underlyingPrice?: number;
+  spotPrice?: number;
   calls: OptionContractDto[];
   puts: OptionContractDto[];
+  availableExpirations?: string[];
 }
 
 export interface StockCandleDto {
-  id: string;
-  symbol: string;
+  id?: string;
+  symbol?: string;
   date: string;
   open: number;
   high: number;
@@ -57,20 +67,24 @@ export interface StockCandleDto {
   close: number;
   volume: number;
   vwap?: number;
-  dataSource: DataSource;
+  dataSource?: DataSource;
 }
 
 export interface MarketCoverageDto {
   symbol: string;
-  assetType: AssetType;
-  isActiveHarvesting: boolean;
+  assetType?: AssetType;
+  isActiveHarvesting?: boolean;
   earliestAvailableDate?: string;
   latestAvailableDate?: string;
-  totalSnapshotDays: number;
-  totalOptionRows: number;
+  earliestDate?: string;
+  latestDate?: string;
+  totalSnapshotDays?: number;
+  totalTradingDays?: number;
+  totalOptionRows?: number;
   healthScorePercent: number;
+  corruptQuotesCount?: number;
   missingDates: string[];
-  corruptQuotesCount: number;
+  dailyAvailability?: { date: string; hasData: boolean; optionRows: number }[];
 }
 
 export interface DataHarvestJob {
@@ -95,7 +109,7 @@ export interface DataIntegrityAudit {
   missingDatesJson: string;
   corruptQuotesCount: number;
   healthScorePercent: number;
-  createdAt: string;
+  createdAt?: string;
 }
 
 export interface ApiKey {
@@ -112,7 +126,7 @@ export interface ApiKey {
 
 export interface ApiUsageLog {
   id: string;
-  apiKeyId: string;
+  apiKeyId?: string;
   consumerName: string;
   endpoint: string;
   httpMethod: string;
@@ -123,13 +137,13 @@ export interface ApiUsageLog {
 }
 
 export interface BacktestRequest {
-  strategy: string;
+  strategy?: string;
   symbol: string;
   startDate: string;
   endDate: string;
   initialCapital: number;
   targetDelta: number;
-  deltaTolerance: number;
+  deltaTolerance?: number;
   targetDte: number;
   minDte: number;
   maxDte: number;
@@ -137,32 +151,38 @@ export interface BacktestRequest {
   stopLossPercent?: number;
   rollOnDeltaBreach: boolean;
   rollDeltaThreshold: number;
-  closeDteThreshold: number;
-  slippagePerContract: number;
-  commissionPerContract: number;
+  closeDteThreshold?: number;
+  commissionPerContract?: number;
+  slippagePercent?: number;
+  slippagePerContract?: number;
 }
 
 export interface BacktestTrade {
-  id: string;
+  id?: string;
   tradeNumber: number;
   entryDate: string;
   exitDate: string;
-  contracts: number;
-  stockEntryPrice: number;
-  stockExitPrice: number;
+  holdDays: number;
+  underlyingSymbol?: string;
   optionSymbol: string;
   strike: number;
-  expirationDate: string;
-  entryDelta: number;
+  expirationDate?: string;
+  entryDelta?: number;
+  contracts: number;
+  stockEntryPrice: number;
+  optionEntryPrice: number;
   optionEntryPremium: number;
+  stockExitPrice: number;
+  optionExitPrice: number;
   optionExitPremium: number;
-  netDebitPaid: number;
-  netCreditReceived: number;
+  netDebitPaid?: number;
+  netCreditReceived?: number;
+  netPnL: number;
   realizedPnlDollars: number;
+  pnlPercent: number;
   returnOnCapitalPercent: number;
-  holdDays: number;
-  exitReason: ExitReason;
-  notes: string;
+  exitReason: ExitReason | string;
+  notes?: string;
 }
 
 export interface EquityPoint {
@@ -171,43 +191,109 @@ export interface EquityPoint {
   stockValue: number;
   optionValue: number;
   totalEquity: number;
-  drawdownPercent: number;
-  benchmarkEquity: number;
-  benchmarkReturnPercent: number;
+  drawdownPercent?: number;
+  benchmarkPrice?: number;
+  benchmarkEquity?: number;
+  benchmarkReturnPercent?: number;
 }
 
+export type DailyEquityPoint = EquityPoint;
+
 export interface PerformanceMetrics {
-  initialCapital: number;
+  initialCapital?: number;
   finalEquity: number;
+  totalTrades: number;
+  winningTrades: number;
+  losingTrades: number;
+  winRate: number;
+  winRatePercent: number;
   totalNetProfit: number;
   totalReturnPercent: number;
   cagrPercent: number;
-  benchmarkReturnPercent: number;
-  benchmarkCAGRPercent: number;
+  benchmarkReturnPercent?: number;
+  benchmarkCAGRPercent?: number;
   alphaPercent: number;
   sharpeRatio: number;
   sortinoRatio: number;
   maxDrawdownPercent: number;
-  winRatePercent: number;
-  totalTrades: number;
-  winningTrades: number;
-  losingTrades: number;
   profitFactor: number;
-  averageTradePnl: number;
-  averageWinningTradePnl: number;
-  averageLosingTradePnl: number;
-  averageHoldDays: number;
+  averageTradePnl?: number;
+  averageWinningTradePnl?: number;
+  averageLosingTradePnl?: number;
+  averageHoldDays?: number;
   annualizedVolatility: number;
 }
 
 export interface BacktestResult {
-  strategyName: string;
+  strategyName?: string;
+  strategy?: string;
   symbol: string;
   startDate: string;
   endDate: string;
   initialCapital: number;
-  parameters: BacktestRequest;
+  parameters?: BacktestRequest;
   metrics: PerformanceMetrics;
   trades: BacktestTrade[];
   dailyEquityCurve: EquityPoint[];
+}
+
+// User & Auth Types
+export interface UserProfile {
+  id: string;
+  email: string;
+  name: string;
+  pictureUrl?: string;
+  role: string;
+  isTwoFactorEnabled: boolean;
+}
+
+export interface AuthResponse {
+  success: boolean;
+  requiresTwoFactor: boolean;
+  twoFactorChallengeToken?: string;
+  token?: string;
+  user?: UserProfile;
+  message?: string;
+}
+
+export interface TwoFactorSetupResponse {
+  secretKey: string;
+  qrCodeUri: string;
+  manualEntryKey?: string;
+}
+
+// System Diagnostics Types
+export interface SystemHealthDto {
+  status: string;
+  timestamp: string;
+  uptimeHours: number;
+  memoryUsageMb: number;
+  processorCount: number;
+  database: {
+    isConnected: boolean;
+    pingLatencyMs: number;
+    provider: string;
+    totalWatchlistSymbols: number;
+    totalOptionSnapshots: number;
+  };
+  tradierApi: {
+    isConfigured: boolean;
+    isOnline: boolean;
+    latencyMs: number;
+    statusDescription: string;
+  };
+  scheduler: {
+    isRunning: boolean;
+    dailyHarvestCron: string;
+    integrityAuditCron: string;
+  };
+}
+
+export interface SystemLogDto {
+  id: string;
+  timestamp: string;
+  level: string;
+  source: string;
+  message: string;
+  exception?: string;
 }
