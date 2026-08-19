@@ -35,6 +35,20 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>
+    /// Returns public auth configuration (e.g. Google Client ID for frontend)
+    /// </summary>
+    [HttpGet("config")]
+    public ActionResult GetAuthConfig()
+    {
+        var clientId = _config["Google:ClientId"] 
+            ?? _config["GOOGLE_CLIENT_ID"] 
+            ?? _config["VITE_GOOGLE_CLIENT_ID"] 
+            ?? string.Empty;
+
+        return Ok(new { googleClientId = clientId });
+    }
+
+    /// <summary>
     /// Authenticates with Google ID Token / Credential
     /// </summary>
     [HttpPost("google")]
@@ -51,7 +65,10 @@ public class AuthController : ControllerBase
 
         try
         {
-            var googleClientId = _config["Google:ClientId"] ?? _config["GOOGLE_CLIENT_ID"];
+            var googleClientId = _config["Google:ClientId"] 
+                ?? _config["GOOGLE_CLIENT_ID"] 
+                ?? _config["VITE_GOOGLE_CLIENT_ID"];
+                
             GoogleJsonWebSignature.Payload? payload = null;
 
             if (!string.IsNullOrWhiteSpace(googleClientId))
@@ -63,7 +80,6 @@ public class AuthController : ControllerBase
             }
             else
             {
-                // Fallback validation without audience constraint if client ID not yet configured
                 payload = await GoogleJsonWebSignature.ValidateAsync(request.Credential);
             }
 
@@ -84,7 +100,6 @@ public class AuthController : ControllerBase
 
         var user = await _userRepo.CreateOrUpdateGoogleUserAsync(email, name, picture, ct);
 
-        // If user has 2FA enabled, issue temporary challenge token
         if (user.IsTwoFactorEnabled && !string.IsNullOrWhiteSpace(user.TwoFactorSecret))
         {
             var challengeToken = _jwtService.GenerateTwoFactorChallengeToken(user);
@@ -97,7 +112,6 @@ public class AuthController : ControllerBase
             });
         }
 
-        // Issue full session token
         var token = _jwtService.GenerateUserToken(user);
         return Ok(new AuthResponse
         {
@@ -119,7 +133,6 @@ public class AuthController : ControllerBase
             return BadRequest(new AuthResponse { Success = false, Message = "Verification code is required." });
         }
 
-        // Case 1: Login challenge verification
         if (!string.IsNullOrWhiteSpace(request.TwoFactorChallengeToken))
         {
             var principal = _jwtService.ValidateToken(request.TwoFactorChallengeToken, isTwoFactorChallenge: true);
@@ -155,7 +168,6 @@ public class AuthController : ControllerBase
             });
         }
 
-        // Case 2: User enabling 2FA while authenticated
         var authUser = await GetCurrentAuthenticatedUserAsync(ct);
         if (authUser == null)
         {

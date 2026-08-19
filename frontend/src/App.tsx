@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider } from './context/AuthContext';
 import { Navbar } from './components/Navbar';
@@ -10,6 +10,7 @@ import { DataIntegrityPage } from './pages/DataIntegrityPage';
 import { BacktestStudioPage } from './pages/BacktestStudioPage';
 import { ApiKeysPage } from './pages/ApiKeysPage';
 import { TroubleshootingPage } from './pages/TroubleshootingPage';
+import { AuthApi } from './services/api';
 
 export const AppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -39,12 +40,33 @@ export const AppContent: React.FC = () => {
 };
 
 export function App() {
-  const googleClientId =
-    (typeof import.meta !== 'undefined' && (import.meta.env.VITE_GOOGLE_CLIENT_ID || import.meta.env.GOOGLE_CLIENT_ID)) ||
-    '1234567890-placeholder.apps.googleusercontent.com';
+  const [clientId, setClientId] = useState<string>(() => {
+    return (
+      (typeof import.meta !== 'undefined' &&
+        (import.meta.env.VITE_GOOGLE_CLIENT_ID ||
+          import.meta.env.GOOGLE_CLIENT_ID)) ||
+      ''
+    );
+  });
+
+  useEffect(() => {
+    const fetchConfig = async () => {
+      try {
+        const config = await AuthApi.getConfig();
+        if (config.googleClientId) {
+          setClientId(config.googleClientId.trim());
+        }
+      } catch (err) {
+        console.warn('Could not fetch dynamic auth config:', err);
+      }
+    };
+    fetchConfig();
+  }, []);
+
+  const activeClientId = clientId || '1234567890-placeholder.apps.googleusercontent.com';
 
   return (
-    <GoogleOAuthProvider clientId={googleClientId}>
+    <GoogleOAuthProvider clientId={activeClientId}>
       <AuthProvider>
         <AppContent />
       </AuthProvider>

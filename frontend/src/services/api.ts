@@ -41,6 +41,8 @@ api.interceptors.request.use((config) => {
 });
 
 export const AuthApi = {
+  getConfig: async () =>
+    (await api.get<{ googleClientId: string }>('/auth/config')).data,
   loginWithGoogle: async (credential: string) =>
     (await api.post<AuthResponse>('/auth/google', { credential })).data,
   verifyTwoFactor: async (payload: { twoFactorChallengeToken?: string; code: string }) =>
