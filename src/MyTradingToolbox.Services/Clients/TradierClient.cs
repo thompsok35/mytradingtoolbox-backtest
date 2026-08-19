@@ -1,4 +1,4 @@
-﻿using System.Net.Http.Headers;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -164,7 +164,7 @@ public class TradierClient : ITradierClient
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error fetching live Tradier data for {Symbol}. Falling back to simulation if allowed.", symbol);
+            _logger.LogWarning(ex, "Tradier API request failed for {Symbol} on {Date}. Falling back to simulation if enabled.", symbol, targetDate);
             if (_settings.UseSimulatedDataIfNoToken)
             {
                 return GenerateSimulatedEodData(symbol, targetDate);
@@ -225,7 +225,7 @@ public class TradierClient : ITradierClient
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error fetching historical candles from Tradier for {Symbol}", symbol);
+            _logger.LogWarning(ex, "Failed to fetch stock candles for {Symbol} via Tradier API; falling back to simulated history.", symbol);
             if (_settings.UseSimulatedDataIfNoToken)
             {
                 return GenerateSimulatedHistoricalCandles(symbol, from, to);
