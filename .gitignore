@@ -1,0 +1,34 @@
+﻿## .NET & Visual Studio
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+.vs/
+.idea/
+.vscode/
+
+## Database & Local Storage
+*.db
+*.db-wal
+*.db-shm
+postgres_data/
+
+## Node.js & React
+node_modules/
+dist/
+build/
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.eslintcache
+.stylelintcache
+
+## Logs & Temp
+*.log
+.system_generated/
+scratch/
+Thumbs.db
+.DS_Store

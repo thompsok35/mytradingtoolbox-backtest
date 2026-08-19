@@ -1,0 +1,30 @@
+﻿name: Scheduled EOD Market Harvester & Health Audit
+
+on:
+  schedule:
+    # 4:10 PM ET Monday-Friday (20:10 UTC in Summer / 21:10 UTC in Winter)
+    - cron: '10 21 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: 'Target Symbol (optional, blank for all active tickers)'
+        required: false
+        default: ''
+
+jobs:
+  trigger-eod-harvest:
+    name: Trigger Automated EOD Ingestion
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Remote Vault Harvester
+        env:
+          VAULT_API_URL: ${{ secrets.VAULT_API_URL }}
+          VAULT_API_KEY: ${{ secrets.VAULT_API_KEY }}
+        run: |
+          if [ -n "$VAULT_API_URL" ] && [ -n "$VAULT_API_KEY" ]; then
+            echo "Dispatching EOD harvest trigger to $VAULT_API_URL..."
+            curl -f -X POST "$VAULT_API_URL/api/v1/harvester/run-daily" \
+              -H "Authorization: Bearer $VAULT_API_KEY"
+          else
+            echo "Vault webhook secrets not configured in this repository. Local Quartz.NET scheduler runs perpetually at 4:05 PM ET."
+          fi

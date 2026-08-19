@@ -1,0 +1,29 @@
+﻿# Multi-stage Dockerfile for .NET 10 Web API Backend
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+WORKDIR /src
+
+# Copy solution and csproj files for optimal layer caching
+COPY ["MyTradingToolbox.Backtest.sln", "./"]
+COPY ["src/MyTradingToolbox.Core/MyTradingToolbox.Core.csproj", "src/MyTradingToolbox.Core/"]
+COPY ["src/MyTradingToolbox.Data/MyTradingToolbox.Data.csproj", "src/MyTradingToolbox.Data/"]
+COPY ["src/MyTradingToolbox.Services/MyTradingToolbox.Services.csproj", "src/MyTradingToolbox.Services/"]
+COPY ["src/MyTradingToolbox.Api/MyTradingToolbox.Api.csproj", "src/MyTradingToolbox.Api/"]
+COPY ["tests/MyTradingToolbox.Tests/MyTradingToolbox.Tests.csproj", "tests/MyTradingToolbox.Tests/"]
+
+RUN dotnet restore
+
+# Copy all source files and publish
+COPY . .
+WORKDIR /src/src/MyTradingToolbox.Api
+RUN dotnet publish -c Release -o /app/publish /p:UseAppHost=false
+
+# Runtime Image
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
+WORKDIR /app
+COPY --from=build /app/publish .
+
+ENV ASPNETCORE_URLS=http://+:5000
+ENV ASPNETCORE_ENVIRONMENT=Production
+EXPOSE 5000
+
+ENTRYPOINT ["dotnet", "MyTradingToolbox.Api.dll"]

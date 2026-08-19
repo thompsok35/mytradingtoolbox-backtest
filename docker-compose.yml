@@ -1,0 +1,53 @@
+﻿services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: mtt_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: marketdata_vault
+      POSTGRES_USER: mtt_user
+      POSTGRES_PASSWORD: mtt_secure_password_2026
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mtt_user -d marketdata_vault"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: mtt_backend
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - DatabaseProvider=Postgres
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=marketdata_vault;Username=mtt_user;Password=mtt_secure_password_2026;
+      - MarketData__TradierApiToken=${TRADIER_API_TOKEN:-}
+      - MarketData__MarketDataApiToken=${MARKETDATA_API_TOKEN:-}
+      - MarketData__UseSimulatedDataIfNoToken=true
+      - MarketData__DailyHarvestCron=0 5 16 ? * MON-FRI
+    ports:
+      - "5000:5000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: mtt_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
