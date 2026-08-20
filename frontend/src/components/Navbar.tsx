@@ -9,8 +9,8 @@ import {
   Activity, 
   LogIn, 
   LogOut, 
-  User, 
-  ShieldAlert
+  ShieldAlert,
+  Lock
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -20,7 +20,7 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
-  const { user, token, openLoginModal, openTwoFactorSetup, logout } = useAuth();
+  const { user, openLoginModal, openTwoFactorSetup, logout } = useAuth();
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
 
   const navItems = [
@@ -52,27 +52,34 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab }) => {
             </div>
           </div>
 
-          {/* Navigation Links */}
-          <nav className="hidden lg:flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800/80">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              const isActive = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    isActive
-                      ? 'bg-emerald-500 text-slate-950 font-semibold shadow-md shadow-emerald-950'
-                      : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  {item.label}
-                </button>
-              );
-            })}
-          </nav>
+          {/* Navigation Links - Only visible when Authenticated */}
+          {user ? (
+            <nav className="hidden lg:flex items-center gap-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800/80">
+              {navItems.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => setActiveTab(item.id)}
+                    className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                      isActive
+                        ? 'bg-emerald-500 text-slate-950 font-semibold shadow-md shadow-emerald-950'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    {item.label}
+                  </button>
+                );
+              })}
+            </nav>
+          ) : (
+            <div className="hidden sm:flex items-center gap-2 text-xs text-slate-400 bg-slate-950/40 px-3 py-1.5 rounded-xl border border-slate-800">
+              <Lock className="w-3.5 h-3.5 text-amber-400" />
+              <span>Authentication Required to Access Data</span>
+            </div>
+          )}
 
           {/* User Auth Section */}
           <div className="flex items-center gap-3">

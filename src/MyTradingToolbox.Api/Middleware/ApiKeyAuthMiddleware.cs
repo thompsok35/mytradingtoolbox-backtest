@@ -33,11 +33,15 @@ public class ApiKeyAuthMiddleware
 
         var path = context.Request.Path.Value ?? string.Empty;
 
-        // 2. Public endpoints
-        if (path.StartsWith("/swagger") || 
-            path.StartsWith("/api/v1/auth") || 
-            path.StartsWith("/health") || 
-            !path.StartsWith("/api/"))
+        // 2. Explicitly allowed public endpoints
+        bool isPublicEndpoint = path.StartsWith("/swagger") || 
+                                path.Equals("/health", StringComparison.OrdinalIgnoreCase) || 
+                                path.Equals("/api/v1/auth/config", StringComparison.OrdinalIgnoreCase) || 
+                                path.Equals("/api/v1/auth/google", StringComparison.OrdinalIgnoreCase) || 
+                                (path.Equals("/api/v1/auth/2fa/verify", StringComparison.OrdinalIgnoreCase) && context.Request.Method == "POST") ||
+                                !path.StartsWith("/api/");
+
+        if (isPublicEndpoint)
         {
             await _next(context);
             return;
@@ -45,7 +49,7 @@ public class ApiKeyAuthMiddleware
 
         string? tokenOrKey = null;
 
-        // Check Authorization header (Bearer <JWT> or Bearer <API_KEY>)
+        // 3. Extract Authorization header (Bearer <JWT> or Bearer <API_KEY>)
         if (context.Request.Headers.TryGetValue("Authorization", out var authHeader))
         {
             var headerStr = authHeader.ToString();
@@ -55,7 +59,7 @@ public class ApiKeyAuthMiddleware
             }
         }
 
-        // Fallback to X-API-KEY header or query parameter
+        // 4. Fallback to X-API-KEY header or query parameter
         if (string.IsNullOrWhiteSpace(tokenOrKey) && context.Request.Headers.TryGetValue("X-API-KEY", out var apiKeyHeader))
         {
             tokenOrKey = apiKeyHeader.ToString().Trim();
@@ -68,7 +72,7 @@ public class ApiKeyAuthMiddleware
 
         var sw = Stopwatch.StartNew();
 
-        // 3. Try validating as User JWT Session Token
+        // 5. Try validating as User JWT Session Token
         if (!string.IsNullOrWhiteSpace(tokenOrKey))
         {
             var userPrincipal = jwtService.ValidateToken(tokenOrKey, isTwoFactorChallenge: false);
@@ -79,7 +83,7 @@ public class ApiKeyAuthMiddleware
                 return;
             }
 
-            // 4. Try validating as Machine API Key (mtt_...)
+            // 6. Try validating as Machine API Key (mtt_...)
             var validatedApiKey = await apiKeyRepo.ValidateKeyAsync(tokenOrKey);
             if (validatedApiKey != null)
             {
@@ -110,7 +114,9 @@ public class ApiKeyAuthMiddleware
             }
         }
 
-        // Allow public dashboard reads / requests for onboarding
-        await _next(context);
+        // 7. Reject unauthenticated requests to protected endpoints
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        context.Response.ContentType = "application/json";
+        await context.Response.WriteAsync("{\"error\":\"Unauthorized\",\"message\":\"Authentication required. Please sign in with Google or provide a valid API Key.\"}");
     }
 }
