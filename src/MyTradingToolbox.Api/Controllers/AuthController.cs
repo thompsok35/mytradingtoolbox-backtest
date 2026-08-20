@@ -59,16 +59,16 @@ public class AuthController : ControllerBase
             return BadRequest(new AuthResponse { Success = false, Message = "Google credential token is required." });
         }
 
-        string email = string.Empty;
-        string name = "Trader";
-        string? picture = null;
-
         try
         {
+            string email = string.Empty;
+            string name = "Trader";
+            string? picture = null;
+
             var googleClientId = _config["Google:ClientId"] 
                 ?? _config["GOOGLE_CLIENT_ID"] 
                 ?? _config["VITE_GOOGLE_CLIENT_ID"];
-                
+
             GoogleJsonWebSignature.Payload? payload = null;
 
             if (!string.IsNullOrWhiteSpace(googleClientId))
@@ -83,43 +83,48 @@ public class AuthController : ControllerBase
                 payload = await GoogleJsonWebSignature.ValidateAsync(request.Credential);
             }
 
+            if (payload == null || string.IsNullOrWhiteSpace(payload.Email))
+            {
+                return Unauthorized(new AuthResponse { Success = false, Message = "Email address could not be verified from Google." });
+            }
+
             email = payload.Email;
             name = payload.Name ?? payload.Email;
             picture = payload.Picture;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Google token validation failed");
-            return Unauthorized(new AuthResponse { Success = false, Message = $"Invalid Google token: {ex.Message}" });
-        }
 
-        if (string.IsNullOrWhiteSpace(email))
-        {
-            return Unauthorized(new AuthResponse { Success = false, Message = "Email address could not be verified from Google." });
-        }
+            var user = await _userRepo.CreateOrUpdateGoogleUserAsync(email, name, picture, ct);
 
-        var user = await _userRepo.CreateOrUpdateGoogleUserAsync(email, name, picture, ct);
+            if (user.IsTwoFactorEnabled && !string.IsNullOrWhiteSpace(user.TwoFactorSecret))
+            {
+                var challengeToken = _jwtService.GenerateTwoFactorChallengeToken(user);
+                return Ok(new AuthResponse
+                {
+                    Success = true,
+                    RequiresTwoFactor = true,
+                    TwoFactorChallengeToken = challengeToken,
+                    Message = "Two-factor authentication code required."
+                });
+            }
 
-        if (user.IsTwoFactorEnabled && !string.IsNullOrWhiteSpace(user.TwoFactorSecret))
-        {
-            var challengeToken = _jwtService.GenerateTwoFactorChallengeToken(user);
+            var token = _jwtService.GenerateUserToken(user);
             return Ok(new AuthResponse
             {
                 Success = true,
-                RequiresTwoFactor = true,
-                TwoFactorChallengeToken = challengeToken,
-                Message = "Two-factor authentication code required."
+                RequiresTwoFactor = false,
+                Token = token,
+                User = ToDto(user)
             });
         }
-
-        var token = _jwtService.GenerateUserToken(user);
-        return Ok(new AuthResponse
+        catch (InvalidJwtException jwtEx)
         {
-            Success = true,
-            RequiresTwoFactor = false,
-            Token = token,
-            User = ToDto(user)
-        });
+            _logger.LogWarning(jwtEx, "Invalid Google JWT token received");
+            return Unauthorized(new AuthResponse { Success = false, Message = $"Invalid Google token: {jwtEx.Message}" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unhandled error during Google authentication");
+            return StatusCode(500, new AuthResponse { Success = false, Message = $"Server error processing authentication: {ex.Message}" });
+        }
     }
 
     /// <summary>
@@ -133,67 +138,75 @@ public class AuthController : ControllerBase
             return BadRequest(new AuthResponse { Success = false, Message = "Verification code is required." });
         }
 
-        if (!string.IsNullOrWhiteSpace(request.TwoFactorChallengeToken))
+        try
         {
-            var principal = _jwtService.ValidateToken(request.TwoFactorChallengeToken, isTwoFactorChallenge: true);
-            if (principal == null)
+            if (!string.IsNullOrWhiteSpace(request.TwoFactorChallengeToken))
             {
-                return Unauthorized(new AuthResponse { Success = false, Message = "2FA challenge token expired or invalid." });
+                var principal = _jwtService.ValidateToken(request.TwoFactorChallengeToken, isTwoFactorChallenge: true);
+                if (principal == null)
+                {
+                    return Unauthorized(new AuthResponse { Success = false, Message = "2FA challenge token expired or invalid." });
+                }
+
+                var userIdStr = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (!Guid.TryParse(userIdStr, out var userId))
+                {
+                    return Unauthorized(new AuthResponse { Success = false, Message = "Invalid user identification in challenge token." });
+                }
+
+                var user = await _userRepo.GetByIdAsync(userId, ct);
+                if (user == null || string.IsNullOrWhiteSpace(user.TwoFactorSecret))
+                {
+                    return Unauthorized(new AuthResponse { Success = false, Message = "User not found or 2FA not configured." });
+                }
+
+                var isValid = _twoFactorService.VerifyCode(user.TwoFactorSecret, request.Code);
+                if (!isValid)
+                {
+                    return BadRequest(new AuthResponse { Success = false, Message = "Invalid 6-digit authenticator code." });
+                }
+
+                var token = _jwtService.GenerateUserToken(user);
+                return Ok(new AuthResponse
+                {
+                    Success = true,
+                    Token = token,
+                    User = ToDto(user)
+                });
             }
 
-            var userIdStr = principal.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (!Guid.TryParse(userIdStr, out var userId))
+            var authUser = await GetCurrentAuthenticatedUserAsync(ct);
+            if (authUser == null)
             {
-                return Unauthorized(new AuthResponse { Success = false, Message = "Invalid user identification in challenge token." });
+                return Unauthorized(new AuthResponse { Success = false, Message = "Authentication required." });
             }
 
-            var user = await _userRepo.GetByIdAsync(userId, ct);
-            if (user == null || string.IsNullOrWhiteSpace(user.TwoFactorSecret))
+            if (string.IsNullOrWhiteSpace(authUser.TwoFactorSecret))
             {
-                return Unauthorized(new AuthResponse { Success = false, Message = "User not found or 2FA not configured." });
+                return BadRequest(new AuthResponse { Success = false, Message = "Please request 2FA setup first." });
             }
 
-            var isValid = _twoFactorService.VerifyCode(user.TwoFactorSecret, request.Code);
-            if (!isValid)
+            var isSetupValid = _twoFactorService.VerifyCode(authUser.TwoFactorSecret, request.Code);
+            if (!isSetupValid)
             {
-                return BadRequest(new AuthResponse { Success = false, Message = "Invalid 6-digit authenticator code." });
+                return BadRequest(new AuthResponse { Success = false, Message = "Invalid 6-digit code. Please verify time and try again." });
             }
 
-            var token = _jwtService.GenerateUserToken(user);
+            authUser.IsTwoFactorEnabled = true;
+            await _userRepo.UpdateUserAsync(authUser, ct);
+
             return Ok(new AuthResponse
             {
                 Success = true,
-                Token = token,
-                User = ToDto(user)
+                User = ToDto(authUser),
+                Message = "Two-Factor Authentication successfully activated!"
             });
         }
-
-        var authUser = await GetCurrentAuthenticatedUserAsync(ct);
-        if (authUser == null)
+        catch (Exception ex)
         {
-            return Unauthorized(new AuthResponse { Success = false, Message = "Authentication required." });
+            _logger.LogError(ex, "Error verifying 2FA");
+            return StatusCode(500, new AuthResponse { Success = false, Message = $"Error verifying code: {ex.Message}" });
         }
-
-        if (string.IsNullOrWhiteSpace(authUser.TwoFactorSecret))
-        {
-            return BadRequest(new AuthResponse { Success = false, Message = "Please request 2FA setup first." });
-        }
-
-        var isSetupValid = _twoFactorService.VerifyCode(authUser.TwoFactorSecret, request.Code);
-        if (!isSetupValid)
-        {
-            return BadRequest(new AuthResponse { Success = false, Message = "Invalid 6-digit code. Please verify time and try again." });
-        }
-
-        authUser.IsTwoFactorEnabled = true;
-        await _userRepo.UpdateUserAsync(authUser, ct);
-
-        return Ok(new AuthResponse
-        {
-            Success = true,
-            User = ToDto(authUser),
-            Message = "Two-Factor Authentication successfully activated!"
-        });
     }
 
     /// <summary>

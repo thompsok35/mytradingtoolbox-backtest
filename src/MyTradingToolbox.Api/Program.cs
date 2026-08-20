@@ -1,4 +1,5 @@
 ﻿using System.Text.Json.Serialization;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
 using MyTradingToolbox.Api.Jobs;
 using MyTradingToolbox.Api.Middleware;
@@ -90,6 +91,29 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<MarketDataContext>();
     db.Database.EnsureCreated();
+
+    // Ensure Users table exists even on pre-existing database deployments
+    try
+    {
+        await db.Database.ExecuteSqlRawAsync(@"
+            CREATE TABLE IF NOT EXISTS ""Users"" (
+                ""Id"" uuid NOT NULL PRIMARY KEY,
+                ""Email"" character varying(256) NOT NULL,
+                ""Name"" character varying(256) NOT NULL,
+                ""PictureUrl"" text,
+                ""Role"" character varying(50) NOT NULL,
+                ""IsTwoFactorEnabled"" boolean NOT NULL,
+                ""TwoFactorSecret"" character varying(128),
+                ""CreatedAt"" timestamp with time zone NOT NULL,
+                ""LastLoginAt"" timestamp with time zone
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Users_Email"" ON ""Users"" (""Email"");
+        ");
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Could not verify/create Users table via raw SQL: {Message}", ex.Message);
+    }
 
     var watchlistRepo = scope.ServiceProvider.GetRequiredService<IWatchlistRepository>();
     var apiKeyRepo = scope.ServiceProvider.GetRequiredService<IApiKeyRepository>();

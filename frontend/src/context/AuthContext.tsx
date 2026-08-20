@@ -43,7 +43,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const profile = await AuthApi.getCurrentUser();
       setUser(profile);
     } catch {
-      // Token expired or invalid
       localStorage.removeItem('mtt_jwt_token');
       setToken(null);
       setUser(null);
@@ -76,10 +75,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return res;
     } catch (err: any) {
+      const msg = err?.response?.data?.message || err?.message || 'Google authentication failed.';
       return {
         success: false,
         requiresTwoFactor: false,
-        message: err?.response?.data?.message || 'Google authentication failed.'
+        message: msg
       };
     }
   };
