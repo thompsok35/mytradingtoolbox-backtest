@@ -13,7 +13,19 @@ using Quartz;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// 1. Add Controllers with JSON serialization configuration
+// 1. Add CORS for Frontend
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowAll", policy =>
+    {
+        policy.SetIsOriginAllowed(_ => true)
+              .AllowAnyMethod()
+              .AllowAnyHeader()
+              .AllowCredentials();
+    });
+});
+
+// 2. Add Controllers with JSON serialization configuration
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
@@ -21,7 +33,7 @@ builder.Services.AddControllers()
         options.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull;
     });
 
-// 2. Configure Swagger with Bearer API Key authentication
+// 3. Configure Swagger with Bearer API Key authentication
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -42,17 +54,6 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-// 3. Add CORS for Frontend
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowAll", policy =>
-    {
-        policy.AllowAnyOrigin()
-              .AllowAnyMethod()
-              .AllowAnyHeader();
-    });
-});
-
 // 4. Register PostgreSQL Data Layer & Services
 builder.Services.AddMarketDataLayer(builder.Configuration);
 builder.Services.AddMarketDataServices(builder.Configuration);
@@ -63,7 +64,6 @@ var tz = TimeZoneInfo.FindSystemTimeZoneById(OperatingSystem.IsWindows() ? "East
 
 builder.Services.AddQuartz(q =>
 {
-    // Job 1: 4:05 PM ET Perpetual EOD Harvester
     var harvestJobKey = new JobKey("DailyHarvestJob");
     q.AddJob<DailyHarvestJob>(opts => opts.WithIdentity(harvestJobKey));
     q.AddTrigger(opts => opts
@@ -71,7 +71,6 @@ builder.Services.AddQuartz(q =>
         .WithIdentity("DailyHarvestTrigger")
         .WithCronSchedule(cronSchedule, x => x.InTimeZone(tz)));
 
-    // Job 2: 4:30 PM ET Gap-Healing & Data Integrity Auditor
     var auditJobKey = new JobKey("DailyIntegrityAuditJob");
     q.AddJob<DailyIntegrityAuditJob>(opts => opts.WithIdentity(auditJobKey));
     q.AddTrigger(opts => opts
@@ -83,7 +82,10 @@ builder.Services.AddQuartzHostedService(q => q.WaitForJobsToComplete = true);
 
 var app = builder.Build();
 
-// 6. Ensure PostgreSQL Database Created & Seed Initial Watchlist and Data
+// 6. Global Exception & CORS Pipeline First
+app.UseCors("AllowAll");
+
+// 7. Ensure PostgreSQL Database Created & Seed Initial Watchlist and Data
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<MarketDataContext>();
@@ -93,7 +95,6 @@ using (var scope = app.Services.CreateScope())
     var apiKeyRepo = scope.ServiceProvider.GetRequiredService<IApiKeyRepository>();
     var harvester = scope.ServiceProvider.GetRequiredService<IHarvestOrchestrator>();
 
-    // Seed default watchlist if empty
     var existingSymbols = await watchlistRepo.GetAllAsync();
     if (existingSymbols.Count == 0)
     {
@@ -111,7 +112,6 @@ using (var scope = app.Services.CreateScope())
             await watchlistRepo.AddOrUpdateAsync(sym);
         }
 
-        // Seed default API keys for consumer apps
         var keys = await apiKeyRepo.GetAllKeysAsync();
         if (keys.Count == 0)
         {
@@ -119,7 +119,6 @@ using (var scope = app.Services.CreateScope())
             await apiKeyRepo.CreateKeyAsync("Market Insights - Expected Price", 300);
         }
 
-        // Initial 3-month historical seed for AAPL & SPY
         var toDate = DateOnly.FromDateTime(DateTime.UtcNow);
         var fromDate = toDate.AddMonths(-3);
         await harvester.TriggerSeedAsync("AAPL", JobType.DailyTradierHarvest, fromDate, toDate);
@@ -127,7 +126,6 @@ using (var scope = app.Services.CreateScope())
     }
     else
     {
-        // On subsequent restarts, automatically run catch-up backfill for any intermediate trading days
         _ = Task.Run(async () =>
         {
             try
@@ -144,7 +142,7 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-// 7. Middleware Pipeline
+// 8. Swagger & Middleware
 app.UseSwagger();
 app.UseSwaggerUI(c =>
 {
@@ -152,7 +150,6 @@ app.UseSwaggerUI(c =>
     c.RoutePrefix = "swagger";
 });
 
-app.UseCors("AllowAll");
 app.UseMiddleware<ApiKeyAuthMiddleware>();
 
 app.MapControllers();

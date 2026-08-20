@@ -24,9 +24,16 @@ public class ApiKeyAuthMiddleware
         IJwtTokenService jwtService,
         ISystemDiagnosticsService diagnostics)
     {
+        // 1. Immediately handle CORS preflight OPTIONS requests
+        if (HttpMethods.IsOptions(context.Request.Method))
+        {
+            context.Response.StatusCode = StatusCodes.Status200OK;
+            return;
+        }
+
         var path = context.Request.Path.Value ?? string.Empty;
 
-        // Public endpoints
+        // 2. Public endpoints
         if (path.StartsWith("/swagger") || 
             path.StartsWith("/api/v1/auth") || 
             path.StartsWith("/health") || 
@@ -38,7 +45,7 @@ public class ApiKeyAuthMiddleware
 
         string? tokenOrKey = null;
 
-        // 1. Check Authorization header (Bearer <JWT> or Bearer <API_KEY>)
+        // Check Authorization header (Bearer <JWT> or Bearer <API_KEY>)
         if (context.Request.Headers.TryGetValue("Authorization", out var authHeader))
         {
             var headerStr = authHeader.ToString();
@@ -48,7 +55,7 @@ public class ApiKeyAuthMiddleware
             }
         }
 
-        // 2. Fallback to X-API-KEY header or query parameter
+        // Fallback to X-API-KEY header or query parameter
         if (string.IsNullOrWhiteSpace(tokenOrKey) && context.Request.Headers.TryGetValue("X-API-KEY", out var apiKeyHeader))
         {
             tokenOrKey = apiKeyHeader.ToString().Trim();
@@ -88,7 +95,6 @@ public class ApiKeyAuthMiddleware
                 await _next(context);
                 sw.Stop();
 
-                // Log machine API usage asynchronously
                 _ = apiKeyRepo.LogUsageAsync(new ApiUsageLog
                 {
                     Id = Guid.NewGuid(),
@@ -104,8 +110,7 @@ public class ApiKeyAuthMiddleware
             }
         }
 
-        // If no credentials provided, in development/open mode we can allow, but in protected production we can require auth.
-        // For backwards compatibility and smooth testing during onboarding, if no key/token is provided on read-only endpoints, allow access.
+        // Allow public dashboard reads / requests for onboarding
         await _next(context);
     }
 }
