@@ -9,10 +9,14 @@ using MyTradingToolbox.Core.Interfaces;
 using MyTradingToolbox.Data;
 using MyTradingToolbox.Data.Context;
 using MyTradingToolbox.Services;
+using MyTradingToolbox.Services.Diagnostics;
 using MyTradingToolbox.Services.Harvester;
 using Quartz;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// 0. Register Custom In-Memory Diagnostics Logger Provider for Live Troubleshooting Stream
+builder.Logging.AddProvider(new DiagnosticsLoggerProvider());
 
 // 1. Add CORS for Frontend
 builder.Services.AddCors(options =>

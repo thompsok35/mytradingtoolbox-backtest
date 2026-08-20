@@ -22,7 +22,7 @@ public class SystemDiagnosticsService : ISystemDiagnosticsService
 {
     private static readonly DateTime StartTime = DateTime.UtcNow;
     private static readonly ConcurrentQueue<SystemLogDto> LogBuffer = new();
-    private const int MaxLogCapacity = 500;
+    private const int MaxLogCapacity = 1000;
 
     private readonly MarketDataContext _db;
     private readonly IWatchlistRepository _watchlistRepo;
@@ -48,6 +48,24 @@ public class SystemDiagnosticsService : ISystemDiagnosticsService
         _settings = settings.Value;
         _config = config;
         _logger = logger;
+    }
+
+    public static void EnqueueLog(string level, string source, string message, string? exception = null)
+    {
+        var entry = new SystemLogDto
+        {
+            Timestamp = DateTime.UtcNow,
+            Level = level,
+            Source = source,
+            Message = message,
+            Exception = exception
+        };
+
+        LogBuffer.Enqueue(entry);
+        while (LogBuffer.Count > MaxLogCapacity)
+        {
+            LogBuffer.TryDequeue(out _);
+        }
     }
 
     public async Task<SystemHealthDto> GetSystemHealthAsync(CancellationToken ct = default)
@@ -155,18 +173,57 @@ public class SystemDiagnosticsService : ISystemDiagnosticsService
 
     public void AddLog(string level, string source, string message, string? exception = null)
     {
-        var entry = new SystemLogDto
+        EnqueueLog(level, source, message, exception);
+    }
+}
+
+public class DiagnosticsLoggerProvider : ILoggerProvider
+{
+    public ILogger CreateLogger(string categoryName)
+    {
+        return new DiagnosticsLogger(categoryName);
+    }
+
+    public void Dispose() { }
+}
+
+public class DiagnosticsLogger : ILogger
+{
+    private readonly string _categoryName;
+
+    public DiagnosticsLogger(string categoryName)
+    {
+        _categoryName = categoryName;
+    }
+
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+    public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Information;
+
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    {
+        if (!IsEnabled(logLevel)) return;
+
+        // Skip excessive framework noise
+        if (_categoryName.StartsWith("Microsoft.AspNetCore.Hosting") || 
+            _categoryName.StartsWith("Microsoft.AspNetCore.Routing") ||
+            _categoryName.StartsWith("Microsoft.AspNetCore.StaticFiles"))
         {
-            Level = level,
-            Source = source,
-            Message = message,
-            Exception = exception
+            if (logLevel < LogLevel.Warning) return;
+        }
+
+        var message = formatter(state, exception);
+        if (string.IsNullOrWhiteSpace(message) && exception == null) return;
+
+        var levelStr = logLevel switch
+        {
+            LogLevel.Error => "Error",
+            LogLevel.Critical => "Critical",
+            LogLevel.Warning => "Warning",
+            _ => "Information"
         };
 
-        LogBuffer.Enqueue(entry);
-        while (LogBuffer.Count > MaxLogCapacity)
-        {
-            LogBuffer.TryDequeue(out _);
-        }
+        var source = _categoryName.Split('.').LastOrDefault() ?? _categoryName;
+        SystemDiagnosticsService.EnqueueLog(levelStr, source, message, exception?.ToString());
     }
 }

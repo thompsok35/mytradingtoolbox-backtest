@@ -119,19 +119,59 @@ public class TradierClient : ITradierClient
             DataSource = DataSource.Tradier
         };
 
-        // 2. Fetch Real Options Chain with Greeks from Tradier
-        var chainResponse = await _httpClient.GetAsync($"markets/options/chains?symbol={symbol}&greeks=true", ct);
-        var chainJson = await chainResponse.Content.ReadAsStringAsync(ct);
+        // 2. Fetch Available Option Expirations for Symbol from Tradier
+        var expResponse = await _httpClient.GetAsync($"markets/options/expirations?symbol={symbol}&includeAllRoots=true", ct);
+        var expJson = await expResponse.Content.ReadAsStringAsync(ct);
 
-        if (!chainResponse.IsSuccessStatusCode)
+        if (!expResponse.IsSuccessStatusCode)
         {
-            _logger.LogError("Tradier option chains API returned HTTP {StatusCode}: {Body}", chainResponse.StatusCode, chainJson);
-            throw new HttpRequestException($"Tradier Option Chain API returned HTTP {chainResponse.StatusCode}: {chainJson}");
+            _logger.LogError("Tradier option expirations API returned HTTP {StatusCode}: {Body}", expResponse.StatusCode, expJson);
+            throw new HttpRequestException($"Tradier Option Expirations API returned HTTP {expResponse.StatusCode}: {expJson}");
         }
 
-        var snapshots = new List<HistoricalOptionSnapshot>();
-        using (var doc = JsonDocument.Parse(chainJson))
+        var expirationDates = new List<string>();
+        using (var doc = JsonDocument.Parse(expJson))
         {
+            if (doc.RootElement.TryGetProperty("expirations", out var expsProp) &&
+                expsProp.TryGetProperty("date", out var dateElem))
+            {
+                if (dateElem.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var d in dateElem.EnumerateArray())
+                    {
+                        var dStr = d.GetString();
+                        if (!string.IsNullOrWhiteSpace(dStr)) expirationDates.Add(dStr);
+                    }
+                }
+                else if (dateElem.ValueKind == JsonValueKind.String)
+                {
+                    var dStr = dateElem.GetString();
+                    if (!string.IsNullOrWhiteSpace(dStr)) expirationDates.Add(dStr);
+                }
+            }
+        }
+
+        _logger.LogInformation("Found {Count} active option expirations for {Symbol} on Tradier", expirationDates.Count, symbol);
+
+        // 3. Query option chain for each expiration with real Greeks
+        var snapshots = new List<HistoricalOptionSnapshot>();
+        foreach (var expStr in expirationDates)
+        {
+            if (!DateOnly.TryParse(expStr, out var expDate)) continue;
+            var dte = (expDate.ToDateTime(TimeOnly.MinValue) - targetDate.ToDateTime(TimeOnly.MinValue)).Days;
+            if (dte < 0) continue;
+
+            var chainUrl = $"markets/options/chains?symbol={symbol}&expiration={expStr}&greeks=true";
+            var chainResponse = await _httpClient.GetAsync(chainUrl, ct);
+            var chainJson = await chainResponse.Content.ReadAsStringAsync(ct);
+
+            if (!chainResponse.IsSuccessStatusCode)
+            {
+                _logger.LogWarning("Tradier chain for expiration {Exp} returned HTTP {StatusCode}: {Body}", expStr, chainResponse.StatusCode, chainJson);
+                continue;
+            }
+
+            using var doc = JsonDocument.Parse(chainJson);
             if (doc.RootElement.TryGetProperty("options", out var optionsProp) &&
                 optionsProp.TryGetProperty("option", out var optionArrayProp))
             {
@@ -142,11 +182,6 @@ public class TradierClient : ITradierClient
                     var optSymbol = opt.GetProperty("symbol").GetString() ?? "";
                     var strike = opt.GetProperty("strike").GetDecimal();
                     var optType = opt.GetProperty("option_type").GetString() ?? "call";
-                    var expStr = opt.GetProperty("expiration_date").GetString() ?? "";
-                    if (!DateOnly.TryParse(expStr, out var expDate)) continue;
-
-                    var dte = (expDate.ToDateTime(TimeOnly.MinValue) - targetDate.ToDateTime(TimeOnly.MinValue)).Days;
-                    if (dte < 0) continue;
 
                     var bid = opt.TryGetProperty("bid", out var b) && b.ValueKind == JsonValueKind.Number ? b.GetDecimal() : 0m;
                     var ask = opt.TryGetProperty("ask", out var a) && a.ValueKind == JsonValueKind.Number ? a.GetDecimal() : 0m;
