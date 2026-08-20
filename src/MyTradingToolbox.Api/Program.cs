@@ -60,7 +60,9 @@ builder.Services.AddMarketDataLayer(builder.Configuration);
 builder.Services.AddMarketDataServices(builder.Configuration);
 
 // 5. Register Quartz Scheduler for 4:05 PM ET Daily EOD Harvester & 4:30 PM ET Integrity Audit
-var cronSchedule = builder.Configuration["MarketData:DailyHarvestCron"] ?? "0 5 16 ? * MON-FRI";
+var cronSchedule = builder.Configuration["MarketData:DailyHarvestCron"] 
+    ?? builder.Configuration["DAILY_HARVEST_CRON"] 
+    ?? "0 5 16 ? * MON-FRI";
 var tz = TimeZoneInfo.FindSystemTimeZoneById(OperatingSystem.IsWindows() ? "Eastern Standard Time" : "America/New_York");
 
 builder.Services.AddQuartz(q =>
@@ -86,7 +88,7 @@ var app = builder.Build();
 // 6. Global Exception & CORS Pipeline First
 app.UseCors("AllowAll");
 
-// 7. Ensure PostgreSQL Database Created & Seed Initial Watchlist and Data
+// 7. Ensure PostgreSQL Database Schema Created & Purge Fake/Synthetic Records
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<MarketDataContext>();
@@ -108,16 +110,19 @@ using (var scope = app.Services.CreateScope())
                 ""LastLoginAt"" timestamp with time zone
             );
             CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Users_Email"" ON ""Users"" (""Email"");
+
+            -- Purge all synthetic/simulated data so only verified real vendor data is retained
+            DELETE FROM ""HistoricalOptionSnapshots"" WHERE ""DataSource"" = 'Synthetic';
+            DELETE FROM ""HistoricalStockCandles"" WHERE ""DataSource"" = 'Synthetic';
         ");
     }
     catch (Exception ex)
     {
-        app.Logger.LogWarning(ex, "Could not verify/create Users table via raw SQL: {Message}", ex.Message);
+        app.Logger.LogWarning(ex, "Could not execute database setup / purge SQL: {Message}", ex.Message);
     }
 
     var watchlistRepo = scope.ServiceProvider.GetRequiredService<IWatchlistRepository>();
     var apiKeyRepo = scope.ServiceProvider.GetRequiredService<IApiKeyRepository>();
-    var harvester = scope.ServiceProvider.GetRequiredService<IHarvestOrchestrator>();
 
     var existingSymbols = await watchlistRepo.GetAllAsync();
     if (existingSymbols.Count == 0)
@@ -142,27 +147,13 @@ using (var scope = app.Services.CreateScope())
             await apiKeyRepo.CreateKeyAsync("itmCCbot", 300);
             await apiKeyRepo.CreateKeyAsync("Market Insights - Expected Price", 300);
         }
-
-        var toDate = DateOnly.FromDateTime(DateTime.UtcNow);
-        var fromDate = toDate.AddMonths(-3);
-        await harvester.TriggerSeedAsync("AAPL", JobType.DailyTradierHarvest, fromDate, toDate);
-        await harvester.TriggerSeedAsync("SPY", JobType.DailyTradierHarvest, fromDate, toDate);
     }
-    else
+
+    // Refresh coverage metrics for all watchlist tickers based exclusively on real data in db
+    var currentWatchlist = await watchlistRepo.GetAllAsync();
+    foreach (var sym in currentWatchlist)
     {
-        _ = Task.Run(async () =>
-        {
-            try
-            {
-                using var bgScope = app.Services.CreateScope();
-                var bgHarvester = bgScope.ServiceProvider.GetRequiredService<IHarvestOrchestrator>();
-                await bgHarvester.RunDailyHarvestAsync();
-            }
-            catch (Exception ex)
-            {
-                app.Logger.LogError(ex, "Startup catch-up backfill encountered an error.");
-            }
-        });
+        await watchlistRepo.UpdateCoverageStatsAsync(sym.Symbol);
     }
 }
 

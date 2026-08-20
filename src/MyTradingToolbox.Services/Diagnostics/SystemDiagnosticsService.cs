@@ -29,6 +29,7 @@ public class SystemDiagnosticsService : ISystemDiagnosticsService
     private readonly IOptionSnapshotRepository _optionRepo;
     private readonly HttpClient _httpClient;
     private readonly MarketDataSettings _settings;
+    private readonly IConfiguration _config;
     private readonly ILogger<SystemDiagnosticsService> _logger;
 
     public SystemDiagnosticsService(
@@ -37,6 +38,7 @@ public class SystemDiagnosticsService : ISystemDiagnosticsService
         IOptionSnapshotRepository optionRepo,
         HttpClient httpClient,
         IOptions<MarketDataSettings> settings,
+        IConfiguration config,
         ILogger<SystemDiagnosticsService> logger)
     {
         _db = db;
@@ -44,6 +46,7 @@ public class SystemDiagnosticsService : ISystemDiagnosticsService
         _optionRepo = optionRepo;
         _httpClient = httpClient;
         _settings = settings.Value;
+        _config = config;
         _logger = logger;
     }
 
@@ -89,7 +92,18 @@ public class SystemDiagnosticsService : ISystemDiagnosticsService
 
     public async Task<TradierHealthDto> TestTradierConnectivityAsync(CancellationToken ct = default)
     {
-        var hasToken = !string.IsNullOrWhiteSpace(_settings.TradierApiToken);
+        var token = _config["MarketData:TradierApiToken"] 
+            ?? _config["TRADIER_API_TOKEN"] 
+            ?? _config["TRADIER_TOKEN"] 
+            ?? Environment.GetEnvironmentVariable("TRADIER_API_TOKEN") 
+            ?? Environment.GetEnvironmentVariable("TRADIER_TOKEN") 
+            ?? _settings.TradierApiToken;
+
+        var baseUrl = _config["MarketData:TradierBaseUrl"] 
+            ?? Environment.GetEnvironmentVariable("TRADIER_BASE_URL") 
+            ?? _settings.TradierBaseUrl;
+
+        var hasToken = !string.IsNullOrWhiteSpace(token);
         var result = new TradierHealthDto
         {
             IsConfigured = hasToken
@@ -97,16 +111,16 @@ public class SystemDiagnosticsService : ISystemDiagnosticsService
 
         if (!hasToken)
         {
-            result.IsOnline = true;
-            result.StatusDescription = "Simulated Fallback Active (Token not configured)";
+            result.IsOnline = false;
+            result.StatusDescription = "Tradier API Token is not configured (set TRADIER_API_TOKEN in environment)";
             return result;
         }
 
         var sw = Stopwatch.StartNew();
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"{_settings.TradierBaseUrl.TrimEnd('/')}/markets/quotes?symbols=SPY");
-            req.Headers.Add("Authorization", $"Bearer {_settings.TradierApiToken}");
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl.TrimEnd('/')}/markets/quotes?symbols=SPY");
+            req.Headers.Add("Authorization", $"Bearer {token.Trim()}");
             req.Headers.Add("Accept", "application/json");
 
             var resp = await _httpClient.SendAsync(req, ct);
@@ -115,7 +129,7 @@ public class SystemDiagnosticsService : ISystemDiagnosticsService
             result.IsOnline = resp.IsSuccessStatusCode;
             result.StatusDescription = resp.IsSuccessStatusCode
                 ? $"Operational ({sw.ElapsedMilliseconds}ms)"
-                : $"API Error: {(int)resp.StatusCode} {resp.ReasonPhrase}";
+                : $"Tradier API HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}";
         }
         catch (Exception ex)
         {
