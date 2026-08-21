@@ -1,4 +1,4 @@
-﻿import axios from 'axios';
+import axios from 'axios';
 import {
   WatchlistSymbol,
   OptionChainResponseDto,
@@ -53,6 +53,8 @@ export const AuthApi = {
     (await api.post<{ success: boolean; message: string }>('/auth/2fa/disable')).data,
   getCurrentUser: async () =>
     (await api.get<UserProfile>('/auth/me')).data,
+  devLogin: async () =>
+    (await api.post<AuthResponse>('/auth/dev-login')).data,
 };
 
 export const DiagnosticsApi = {

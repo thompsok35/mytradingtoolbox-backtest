@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Navbar } from './components/Navbar';
@@ -15,28 +15,27 @@ import { Lock, Shield, Database, PlaySquare, Key, Activity, RefreshCw } from 'lu
 
 export const AppContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
-  const { user, isLoading, loginWithGoogle } = useAuth();
-  const [loginError, setLoginError] = useState('');
+  const { user, loginWithGoogle, loginDev, isLoading } = useAuth();
+  const [loginError, setLoginError] = useState<string>('');
+  const isLocalhost = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
-  // 1. Initial Session Verification
+  // 1. Loading Splash
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-center p-4">
-        <div className="flex flex-col items-center gap-3">
-          <RefreshCw className="w-8 h-8 text-emerald-400 animate-spin" />
-          <p className="text-sm font-mono text-slate-400">Verifying secure session...</p>
-        </div>
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400">
+        <div className="w-10 h-10 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mb-4" />
+        <p className="text-sm font-medium tracking-wide text-slate-300">Initializing MyTradingToolbox Vault...</p>
       </div>
     );
   }
 
-  // 2. Strict Authentication Wall: If unauthenticated, show Lock Screen Gate
+  // 2. Unauthenticated Gate: Restricted Access Lock Screen
   if (!user) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-slate-950">
         <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
 
-        <main className="flex-1 max-w-4xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-12 flex flex-col items-center justify-center">
+        <main className="flex-1 flex items-center justify-center px-4 py-12">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 sm:p-12 shadow-2xl text-center max-w-xl w-full">
             <div className="inline-flex p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-emerald-400 mb-6 shadow-inner">
               <Lock className="w-10 h-10" />
@@ -55,7 +54,7 @@ export const AppContent: React.FC = () => {
               </div>
             )}
 
-            <div className="flex justify-center mb-8">
+            <div className="flex flex-col items-center justify-center gap-3 mb-8">
               <GoogleLogin
                 onSuccess={async (credentialResponse) => {
                   setLoginError('');
@@ -71,6 +70,20 @@ export const AppContent: React.FC = () => {
                 shape="pill"
                 size="large"
               />
+
+              {isLocalhost && (
+                <button
+                  onClick={async () => {
+                    setLoginError('');
+                    const res = await loginDev();
+                    if (!res.success && res.message) setLoginError(res.message);
+                  }}
+                  className="w-full max-w-xs mt-3 py-2.5 px-4 bg-slate-800 hover:bg-slate-750 text-emerald-400 font-semibold text-xs rounded-full border border-emerald-500/30 hover:border-emerald-500/60 transition flex items-center justify-center gap-2 shadow-sm"
+                >
+                  <Shield className="w-3.5 h-3.5" />
+                  <span>Quick Dev Sign-In (Localhost)</span>
+                </button>
+              )}
             </div>
 
             {/* Protected Modules Feature List */}

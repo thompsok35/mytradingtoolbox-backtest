@@ -1,4 +1,4 @@
-﻿import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile, AuthResponse } from '../types';
 import { AuthApi } from '../services/api';
 
@@ -15,6 +15,7 @@ interface AuthContextType {
   openTwoFactorSetup: () => void;
   closeTwoFactorSetup: () => void;
   loginWithGoogle: (credential: string) => Promise<AuthResponse>;
+  loginDev: () => Promise<AuthResponse>;
   verifyTwoFactor: (code: string) => Promise<boolean>;
   logout: () => void;
   refreshUser: () => Promise<void>;
@@ -84,6 +85,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const loginDev = async (): Promise<AuthResponse> => {
+    try {
+      const res = await AuthApi.devLogin();
+      if (res.token && res.user) {
+        localStorage.setItem('mtt_jwt_token', res.token);
+        setToken(res.token);
+        setUser(res.user);
+        setRequiresTwoFactorChallenge(false);
+        setChallengeToken(null);
+        setLoginModalOpen(false);
+      }
+      return res;
+    } catch (err: any) {
+      return {
+        success: false,
+        requiresTwoFactor: false,
+        message: err?.response?.data?.message || 'Dev login failed'
+      };
+    }
+  };
+
   const verifyTwoFactor = async (code: string): Promise<boolean> => {
     try {
       const res = await AuthApi.verifyTwoFactor({
@@ -133,6 +155,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         openTwoFactorSetup: () => setTwoFactorSetupOpen(true),
         closeTwoFactorSetup: () => setTwoFactorSetupOpen(false),
         loginWithGoogle,
+        loginDev,
         verifyTwoFactor,
         logout,
         refreshUser

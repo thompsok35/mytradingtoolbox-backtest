@@ -1,4 +1,4 @@
-﻿using System.Security.Claims;
+using System.Security.Claims;
 using Google.Apis.Auth;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -46,6 +46,24 @@ public class AuthController : ControllerBase
             ?? string.Empty;
 
         return Ok(new { googleClientId = clientId });
+    }
+
+    /// <summary>
+    /// Instant 1-click login for local development / testing
+    /// </summary>
+    [HttpPost("dev-login")]
+    public async Task<ActionResult<AuthResponse>> DevLogin(CancellationToken ct)
+    {
+        var user = await _userRepo.CreateOrUpdateGoogleUserAsync("dev@mytradingtoolbox.com", "Local Admin", null, ct);
+        var token = _jwtService.GenerateUserToken(user);
+        return Ok(new AuthResponse
+        {
+            Success = true,
+            RequiresTwoFactor = false,
+            Token = token,
+            User = ToDto(user),
+            Message = "Logged in via local development bypass."
+        });
     }
 
     /// <summary>
