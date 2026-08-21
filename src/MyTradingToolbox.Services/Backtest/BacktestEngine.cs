@@ -80,11 +80,20 @@ public class BacktestEngine : IBacktestEngine
             // 1. Manage existing active position
             if (currentPosition != null)
             {
-                // Find today's option quote for current position contract
-                var optionQuotes = await _optionRepo.GetQuotesByOptionSymbolAsync(currentPosition.OptionSymbol, date, date, ct);
-                var todayQuote = optionQuotes.FirstOrDefault();
-                var currentOptionPrice = todayQuote?.Mid ?? todayQuote?.Ask ?? Math.Max(0.01m, spotPrice - currentPosition.Strike);
-                var currentDelta = todayQuote?.Delta ?? 0.50m;
+                // Find today's option quote from preloaded cached quotes
+                decimal currentOptionPrice;
+                decimal currentDelta;
+                if (currentPosition.CachedQuotes.TryGetValue(date, out var cachedQ))
+                {
+                    currentOptionPrice = cachedQ.Mid;
+                    currentDelta = cachedQ.Delta;
+                }
+                else
+                {
+                    currentOptionPrice = Math.Max(0.01m, spotPrice - currentPosition.Strike);
+                    currentDelta = 0.50m;
+                }
+
                 var currentDte = (currentPosition.ExpirationDate.ToDateTime(TimeOnly.MinValue) - date.ToDateTime(TimeOnly.MinValue)).Days;
 
                 bool shouldExit = false;
@@ -177,6 +186,7 @@ public class BacktestEngine : IBacktestEngine
                         OptionEntryPremium = currentPosition.OptionEntryPremium,
                         OptionExitPremium = exitOptionPrice,
                         NetDebitPaid = currentPosition.NetDebitPaid,
+                        TotalDebitOutlay = Math.Round(currentPosition.TotalCost, 2),
                         NetCreditReceived = proceeds / (currentPosition.Contracts * 100m),
                         RealizedPnlDollars = Math.Round(tradePnl, 2),
                         ReturnOnCapitalPercent = Math.Round(returnPct, 2),
@@ -231,11 +241,37 @@ public class BacktestEngine : IBacktestEngine
 
                         if (costPerContract > 0 && currentCash >= costPerContract)
                         {
-                            int contracts = (int)(currentCash / costPerContract);
+                            int contracts = 1;
+                            switch (request.SizingMode)
+                            {
+                                case PositionSizingMode.FixedContracts:
+                                    contracts = Math.Max(1, request.FixedContracts);
+                                    break;
+                                case PositionSizingMode.FixedDollarBudget:
+                                    var maxBudget = request.FixedDollarBudget > 0 ? request.FixedDollarBudget : 2500m;
+                                    contracts = Math.Max(1, (int)(maxBudget / costPerContract));
+                                    break;
+                                case PositionSizingMode.PortfolioCompoundingPercent:
+                                    var allocPct = request.AllocationPercent > 0 ? request.AllocationPercent : 0.10m;
+                                    contracts = Math.Max(1, (int)((currentCash * allocPct) / costPerContract));
+                                    break;
+                                default:
+                                    contracts = 1;
+                                    break;
+                            }
+
+                            int maxAffordable = (int)(currentCash / costPerContract);
+                            if (contracts > maxAffordable) contracts = maxAffordable;
                             if (contracts < 1) contracts = 1;
 
                             var totalCost = costPerContract * contracts;
                             currentCash -= totalCost;
+
+                            var lifetimeQuotes = await _optionRepo.GetQuotesByOptionSymbolAsync(candidate.OptionSymbol, date, candidate.ExpirationDate, ct);
+                            var quoteDict = lifetimeQuotes.ToDictionary(
+                                q => q.SnapshotDate, 
+                                q => (Mid: q.Mid > 0 ? q.Mid : (q.Last > 0 ? q.Last : Math.Max(0.01m, spotPrice - candidate.Strike)), 
+                                      Delta: q.Delta ?? candidate.Delta ?? request.TargetDelta));
 
                             currentPosition = new ActivePosition
                             {
@@ -248,7 +284,8 @@ public class BacktestEngine : IBacktestEngine
                                 EntryDelta = candidate.Delta ?? request.TargetDelta,
                                 OptionEntryPremium = callPremium,
                                 NetDebitPaid = netDebitPerShare,
-                                TotalCost = totalCost
+                                TotalCost = totalCost,
+                                CachedQuotes = quoteDict
                             };
                         }
                     }
@@ -262,9 +299,15 @@ public class BacktestEngine : IBacktestEngine
             if (currentPosition != null)
             {
                 stockValue = spotPrice * 100m * currentPosition.Contracts;
-                var optQuotes = await _optionRepo.GetQuotesByOptionSymbolAsync(currentPosition.OptionSymbol, date, date, ct);
-                var optQuote = optQuotes.FirstOrDefault();
-                var optPrice = optQuote?.Mid ?? Math.Max(0.01m, spotPrice - currentPosition.Strike);
+                decimal optPrice;
+                if (currentPosition.CachedQuotes.TryGetValue(date, out var cachedMark))
+                {
+                    optPrice = cachedMark.Mid;
+                }
+                else
+                {
+                    optPrice = Math.Max(0.01m, spotPrice - currentPosition.Strike);
+                }
                 optionLiability = optPrice * 100m * currentPosition.Contracts;
             }
 
@@ -295,8 +338,7 @@ public class BacktestEngine : IBacktestEngine
             tradeCounter++;
             var lastCandle = candles.Last();
             var exitStockPrice = lastCandle.Close;
-            var optQuotes = await _optionRepo.GetQuotesByOptionSymbolAsync(currentPosition.OptionSymbol, lastCandle.Date, lastCandle.Date, ct);
-            var optPrice = optQuotes.FirstOrDefault()?.Mid ?? Math.Max(0.01m, exitStockPrice - currentPosition.Strike);
+            var optPrice = currentPosition.CachedQuotes.TryGetValue(lastCandle.Date, out var lastQuote) ? lastQuote.Mid : Math.Max(0.01m, exitStockPrice - currentPosition.Strike);
             var proceeds = (exitStockPrice * 100m * currentPosition.Contracts) - (optPrice * 100m * currentPosition.Contracts);
             var tradePnl = proceeds - currentPosition.TotalCost;
             var holdDays = (lastCandle.Date.ToDateTime(TimeOnly.MinValue) - currentPosition.EntryDate.ToDateTime(TimeOnly.MinValue)).Days;
@@ -320,6 +362,7 @@ public class BacktestEngine : IBacktestEngine
                 OptionEntryPremium = currentPosition.OptionEntryPremium,
                 OptionExitPremium = optPrice,
                 NetDebitPaid = currentPosition.NetDebitPaid,
+                TotalDebitOutlay = Math.Round(currentPosition.TotalCost, 2),
                 NetCreditReceived = proceeds / (currentPosition.Contracts * 100m),
                 RealizedPnlDollars = Math.Round(tradePnl, 2),
                 ReturnOnCapitalPercent = Math.Round((tradePnl / currentPosition.TotalCost) * 100m, 2),
@@ -434,5 +477,6 @@ public class BacktestEngine : IBacktestEngine
         public decimal OptionEntryPremium { get; set; }
         public decimal NetDebitPaid { get; set; }
         public decimal TotalCost { get; set; }
+        public Dictionary<DateOnly, (decimal Mid, decimal Delta)> CachedQuotes { get; set; } = new();
     }
 }

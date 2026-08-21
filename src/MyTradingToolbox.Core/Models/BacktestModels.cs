@@ -1,6 +1,13 @@
-﻿using MyTradingToolbox.Core.Enums;
+using MyTradingToolbox.Core.Enums;
 
 namespace MyTradingToolbox.Core.Models;
+
+public enum PositionSizingMode
+{
+    FixedContracts = 1,
+    FixedDollarBudget = 2,
+    PortfolioCompoundingPercent = 3
+}
 
 public class BacktestRequest
 {
@@ -10,6 +17,12 @@ public class BacktestRequest
     public DateOnly EndDate { get; set; }
     public decimal InitialCapital { get; set; } = 50000m;
     
+    // Position Sizing Methodology
+    public PositionSizingMode SizingMode { get; set; } = PositionSizingMode.FixedContracts;
+    public int FixedContracts { get; set; } = 1;
+    public decimal FixedDollarBudget { get; set; } = 2500m;
+    public decimal AllocationPercent { get; set; } = 0.10m; // 10% of portfolio cash
+
     // ITM Covered Call parameters
     public decimal TargetDelta { get; set; } = 0.70m;
     public decimal DeltaTolerance { get; set; } = 0.10m;
@@ -54,6 +67,7 @@ public class BacktestTrade
     public decimal OptionEntryPremium { get; set; }
     public decimal OptionExitPremium { get; set; }
     public decimal NetDebitPaid { get; set; }
+    public decimal TotalDebitOutlay { get; set; }
     public decimal NetCreditReceived { get; set; }
     public decimal RealizedPnlDollars { get; set; }
     public decimal ReturnOnCapitalPercent { get; set; }

@@ -1,4 +1,4 @@
-﻿export type AssetType = 'Equity' | 'ETF' | 'Index' | 'Crypto';
+export type AssetType = 'Equity' | 'ETF' | 'Index' | 'Crypto';
 export type OptionSide = 'Call' | 'Put';
 export type JobType = 'DailyTradierHarvest' | 'ThetaDataSeed' | 'MarketDataSeed' | 'CSVImport' | 'CsvBulkImport' | 'IntegrityCheck' | 'IntegrityRepair' | 'AutoRepair';
 export type JobStatus = 'Pending' | 'Running' | 'Completed' | 'Failed';
@@ -136,12 +136,21 @@ export interface ApiUsageLog {
   ipAddress?: string;
 }
 
+export type PositionSizingMode = 'FixedContracts' | 'FixedDollarBudget' | 'PortfolioCompoundingPercent';
+
 export interface BacktestRequest {
   strategy?: string;
   symbol: string;
   startDate: string;
   endDate: string;
   initialCapital: number;
+  
+  // Position Sizing Methodology
+  sizingMode?: PositionSizingMode;
+  fixedContracts?: number;
+  fixedDollarBudget?: number;
+  allocationPercent?: number;
+
   targetDelta: number;
   deltaTolerance?: number;
   targetDte: number;
@@ -176,11 +185,11 @@ export interface BacktestTrade {
   optionExitPrice: number;
   optionExitPremium: number;
   netDebitPaid?: number;
+  totalDebitOutlay?: number;
   netCreditReceived?: number;
-  netPnL: number;
-  realizedPnlDollars: number;
-  pnlPercent: number;
-  returnOnCapitalPercent: number;
+  netPnL?: number;
+  realizedPnlDollars?: number;
+  returnOnCapitalPercent?: number;
   exitReason: ExitReason | string;
   notes?: string;
 }
