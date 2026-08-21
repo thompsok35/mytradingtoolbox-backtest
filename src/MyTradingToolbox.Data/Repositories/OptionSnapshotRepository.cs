@@ -153,6 +153,44 @@ public class OptionSnapshotRepository : IOptionSnapshotRepository
             .ToListAsync(ct);
     }
 
+    public async Task<int> RecalculateGreeksAsync(string symbol, CancellationToken ct = default)
+    {
+        var sym = symbol.Trim().ToUpperInvariant();
+        var candles = await _db.HistoricalStockCandles
+            .AsNoTracking()
+            .Where(c => c.Symbol == sym)
+            .ToDictionaryAsync(c => c.Date, c => c.Close, ct);
+
+        var dates = await GetAvailableDatesAsync(sym, ct);
+        int updatedCount = 0;
+
+        foreach (var date in dates)
+        {
+            if (!candles.TryGetValue(date, out var spotPrice) || spotPrice <= 0) continue;
+
+            var snapshots = await _db.HistoricalOptionSnapshots
+                .Where(o => o.UnderlyingSymbol == sym && o.SnapshotDate == date)
+                .ToListAsync(ct);
+
+            foreach (var s in snapshots)
+            {
+                s.UnderlyingPrice = spotPrice;
+                var greeks = MyTradingToolbox.Core.Calculators.BlackScholesCalculator.ComputeGreeks(
+                    spotPrice, s.Strike, s.DTE, s.Side, s.Mid > 0 ? s.Mid : s.Last);
+                s.Delta = greeks.Delta;
+                s.Gamma = greeks.Gamma;
+                s.Theta = greeks.Theta;
+                s.Vega = greeks.Vega;
+                s.ImpliedVolatility = greeks.IV;
+                updatedCount++;
+            }
+
+            await _db.SaveChangesAsync(ct);
+        }
+
+        return updatedCount;
+    }
+
     public async Task<int> GetTotalRowsCountAsync(string? symbol = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(symbol))

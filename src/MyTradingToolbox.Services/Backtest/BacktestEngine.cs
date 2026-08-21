@@ -209,7 +209,7 @@ public class BacktestEngine : IBacktestEngine
                     {
                         if ((c.Delta == null || c.Delta == 0) && spotPrice > 0)
                         {
-                            var greeks = Greeks.BlackScholesCalculator.ComputeGreeks(
+                            var greeks = Core.Calculators.BlackScholesCalculator.ComputeGreeks(
                                 spotPrice, c.Strike, c.DTE, c.Side, c.Mid > 0 ? c.Mid : c.Last);
                             c.Delta = greeks.Delta;
                             c.ImpliedVolatility = greeks.IV;

@@ -20,6 +20,7 @@ public interface IOptionSnapshotRepository
     Task<List<HistoricalOptionSnapshot>> GetQuotesByOptionSymbolAsync(string optionSymbol, DateOnly? from = null, DateOnly? to = null, CancellationToken ct = default);
     Task<int> UpsertSnapshotsAsync(IEnumerable<HistoricalOptionSnapshot> snapshots, CancellationToken ct = default);
     Task<List<DateOnly>> GetAvailableDatesAsync(string symbol, CancellationToken ct = default);
+    Task<int> RecalculateGreeksAsync(string symbol, CancellationToken ct = default);
     Task<int> GetTotalRowsCountAsync(string? symbol = null, CancellationToken ct = default);
 }
 

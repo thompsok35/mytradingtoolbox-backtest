@@ -1,6 +1,6 @@
 using MyTradingToolbox.Core.Enums;
 
-namespace MyTradingToolbox.Services.Greeks;
+namespace MyTradingToolbox.Core.Calculators;
 
 public static class BlackScholesCalculator
 {

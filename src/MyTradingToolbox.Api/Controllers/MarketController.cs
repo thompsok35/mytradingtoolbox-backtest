@@ -12,11 +12,16 @@ public class MarketController : ControllerBase
 {
     private readonly IWatchlistRepository _watchlistRepo;
     private readonly IDataIntegrityService _integrityService;
+    private readonly IOptionSnapshotRepository _optionRepo;
 
-    public MarketController(IWatchlistRepository watchlistRepo, IDataIntegrityService integrityService)
+    public MarketController(
+        IWatchlistRepository watchlistRepo,
+        IDataIntegrityService integrityService,
+        IOptionSnapshotRepository optionRepo)
     {
         _watchlistRepo = watchlistRepo;
         _integrityService = integrityService;
+        _optionRepo = optionRepo;
     }
 
     /// <summary>
@@ -61,6 +66,16 @@ public class MarketController : ControllerBase
         var success = await _watchlistRepo.ToggleHarvestingAsync(symbol, active, ct);
         if (!success) return NotFound();
         return Ok(new { symbol, isActive = active });
+    }
+
+    /// <summary>
+    /// Recalculates and persists Black-Scholes Greeks (Delta, Gamma, Theta, Vega, IV) for all vaulted snapshots of a symbol
+    /// </summary>
+    [HttpPost("recalculate-greeks/{symbol}")]
+    public async Task<ActionResult> RecalculateGreeks(string symbol, CancellationToken ct)
+    {
+        var count = await _optionRepo.RecalculateGreeksAsync(symbol, ct);
+        return Ok(new { symbol, updatedRows = count, message = $"Successfully updated {count} option snapshot rows with real Black-Scholes Greeks." });
     }
 
     /// <summary>

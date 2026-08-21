@@ -103,7 +103,7 @@ public class OptionsController : ControllerBase
 
                 if ((delta == null || delta == 0) && underlyingPrice > 0)
                 {
-                    var greeks = MyTradingToolbox.Services.Greeks.BlackScholesCalculator.ComputeGreeks(
+                    var greeks = MyTradingToolbox.Core.Calculators.BlackScholesCalculator.ComputeGreeks(
                         underlyingPrice, s.Strike, s.DTE, s.Side, s.Mid > 0 ? s.Mid : s.Last);
                     delta = greeks.Delta;
                     gamma = greeks.Gamma;
@@ -148,7 +148,7 @@ public class OptionsController : ControllerBase
 
                 if ((delta == null || delta == 0) && underlyingPrice > 0)
                 {
-                    var greeks = MyTradingToolbox.Services.Greeks.BlackScholesCalculator.ComputeGreeks(
+                    var greeks = MyTradingToolbox.Core.Calculators.BlackScholesCalculator.ComputeGreeks(
                         underlyingPrice, s.Strike, s.DTE, s.Side, s.Mid > 0 ? s.Mid : s.Last);
                     delta = greeks.Delta;
                     gamma = greeks.Gamma;
