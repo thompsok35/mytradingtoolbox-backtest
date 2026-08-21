@@ -115,10 +115,10 @@ using (var scope = app.Services.CreateScope())
             );
             CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Users_Email"" ON ""Users"" (""Email"");
 
-            -- Purge all synthetic and legacy UMAC records so only clean real vendor data is retained
-            DELETE FROM ""HistoricalOptionSnapshots"" WHERE ""UnderlyingSymbol"" = 'UMAC' OR ""DataSource"" = 'Synthetic';
-            DELETE FROM ""HistoricalStockCandles"" WHERE ""Symbol"" = 'UMAC' OR ""DataSource"" = 'Synthetic';
-            UPDATE ""WatchlistSymbols"" SET ""TotalOptionRows"" = 0, ""TotalSnapshotDays"" = 0, ""EarliestAvailableDate"" = NULL, ""LatestAvailableDate"" = NULL WHERE ""Symbol"" = 'UMAC';
+            -- Purge synthetic data and reset orphaned running jobs on startup
+            DELETE FROM ""HistoricalOptionSnapshots"" WHERE ""DataSource"" = 'Synthetic';
+            DELETE FROM ""HistoricalStockCandles"" WHERE ""DataSource"" = 'Synthetic';
+            UPDATE ""DataHarvestJobs"" SET ""Status"" = 'Failed', ""ExecutionLog"" = COALESCE(""ExecutionLog"", '') || E'\nTerminated due to backend restart.' WHERE ""Status"" = 'Running';
         ");
     }
     catch (Exception ex)
