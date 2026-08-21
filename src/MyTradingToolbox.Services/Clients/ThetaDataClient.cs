@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
@@ -270,14 +270,18 @@ public class ThetaDataClient : IThetaDataClient
     public async Task<List<HistoricalOptionSnapshot>> FetchEodHistoricalRangeAsync(string symbol, DateOnly from, DateOnly to, CancellationToken ct = default)
     {
         symbol = symbol.Trim().ToUpperInvariant();
-        _logger.LogInformation("Retrieving real historical option chains from ThetaData Terminal v3 for {Symbol} from {From} to {To}", symbol, from, to);
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var effectiveTo = to >= today ? today.AddDays(-1) : to;
+        if (effectiveTo < from) effectiveTo = from;
+
+        _logger.LogInformation("Retrieving real historical option chains from ThetaData Terminal v3 for {Symbol} from {From} to {To}", symbol, from, effectiveTo);
 
         var snapshots = new List<HistoricalOptionSnapshot>();
 
         var chunkStart = from;
-        while (chunkStart <= to)
+        while (chunkStart <= effectiveTo)
         {
-            var chunkEnd = chunkStart.AddDays(180) > to ? to : chunkStart.AddDays(180);
+            var chunkEnd = chunkStart.AddDays(180) > effectiveTo ? effectiveTo : chunkStart.AddDays(180);
             var startStr = $"{chunkStart:yyyyMMdd}";
             var endStr = $"{chunkEnd:yyyyMMdd}";
 
@@ -306,8 +310,107 @@ public class ThetaDataClient : IThetaDataClient
                     {
                         foreach (var item in items.EnumerateArray())
                         {
-                            if (item.ValueKind == JsonValueKind.Object)
+                            if (item.ValueKind != JsonValueKind.Object) continue;
+
+                            // Handle ThetaData v3 Contract object
+                            JsonElement contractElem = item;
+                            if (item.TryGetProperty("contract", out var cObj) && cObj.ValueKind == JsonValueKind.Object)
                             {
+                                contractElem = cObj;
+                            }
+
+                            var rightStr = contractElem.TryGetProperty("right", out var rElem) ? rElem.GetString()?.ToUpperInvariant() ?? "C" : "C";
+                            var side = rightStr.StartsWith("P") ? OptionSide.Put : OptionSide.Call;
+
+                            decimal strike = contractElem.TryGetProperty("strike", out var stk) ? stk.GetDecimal() : 0m;
+                            if (strike > 1000) strike /= 1000m;
+
+                            DateOnly expDate = chunkStart.AddDays(7);
+                            if (contractElem.TryGetProperty("expiration", out var expElem))
+                            {
+                                if (expElem.ValueKind == JsonValueKind.Number)
+                                {
+                                    int intExp = expElem.GetInt32();
+                                    expDate = new DateOnly(intExp / 10000, (intExp % 10000) / 100, intExp % 100);
+                                }
+                                else if (DateOnly.TryParse(expElem.GetString(), out var pexp))
+                                {
+                                    expDate = pexp;
+                                }
+                            }
+
+                            // If item has a nested 'data' array (one per historical day)
+                            if (item.TryGetProperty("data", out var dataArr) && dataArr.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var dItem in dataArr.EnumerateArray())
+                                {
+                                    if (dItem.ValueKind != JsonValueKind.Object) continue;
+
+                                    DateOnly snapDate = chunkStart;
+                                    if (dItem.TryGetProperty("date", out var dElem))
+                                    {
+                                        if (dElem.ValueKind == JsonValueKind.Number)
+                                        {
+                                            int intDate = dElem.GetInt32();
+                                            snapDate = new DateOnly(intDate / 10000, (intDate % 10000) / 100, intDate % 100);
+                                        }
+                                        else if (DateOnly.TryParse(dElem.GetString(), out var pd))
+                                        {
+                                            snapDate = pd;
+                                        }
+                                    }
+                                    else if (dItem.TryGetProperty("created", out var crElem) && DateTime.TryParse(crElem.GetString(), out var crDt))
+                                    {
+                                        snapDate = DateOnly.FromDateTime(crDt);
+                                    }
+                                    else if (dItem.TryGetProperty("last_trade", out var ltElem) && DateTime.TryParse(ltElem.GetString(), out var ltDt))
+                                    {
+                                        snapDate = DateOnly.FromDateTime(ltDt);
+                                    }
+
+                                    var dte = (expDate.ToDateTime(TimeOnly.MinValue) - snapDate.ToDateTime(TimeOnly.MinValue)).Days;
+                                    if (dte < 0) continue;
+
+                                    decimal close = dItem.TryGetProperty("close", out var cElem) ? cElem.GetDecimal() : 0m;
+                                    decimal low = dItem.TryGetProperty("low", out var lElem) ? lElem.GetDecimal() : 0m;
+                                    decimal high = dItem.TryGetProperty("high", out var hElem) ? hElem.GetDecimal() : 0m;
+                                    decimal bid = dItem.TryGetProperty("bid", out var bElem) ? bElem.GetDecimal() : 0m;
+                                    decimal ask = dItem.TryGetProperty("ask", out var aElem) ? aElem.GetDecimal() : 0m;
+                                    long vol = dItem.TryGetProperty("volume", out var vElem) && vElem.ValueKind == JsonValueKind.Number ? vElem.GetInt64() : 0;
+
+                                    if (bid <= 0 && ask <= 0)
+                                    {
+                                        bid = Math.Max(0.01m, low);
+                                        ask = Math.Max(bid, high > 0 ? high : close);
+                                    }
+                                    decimal mid = (bid + ask) / 2m;
+
+                                    var optSymbol = OCCParser.Format(symbol, expDate, side, strike);
+
+                                    snapshots.Add(new HistoricalOptionSnapshot
+                                    {
+                                        Id = Guid.NewGuid(),
+                                        UnderlyingSymbol = symbol,
+                                        SnapshotDate = snapDate,
+                                        OptionSymbol = optSymbol,
+                                        ExpirationDate = expDate,
+                                        DTE = dte,
+                                        Strike = strike,
+                                        Side = side,
+                                        Bid = bid,
+                                        Ask = ask,
+                                        Mid = mid,
+                                        Last = close,
+                                        UnderlyingPrice = 0m,
+                                        Volume = vol,
+                                        OpenInterest = 0,
+                                        DataSource = DataSource.ThetaData
+                                    });
+                                }
+                            }
+                            else
+                            {
+                                // Flat contract item
                                 DateOnly snapDate = chunkStart;
                                 if (item.TryGetProperty("date", out var dElem))
                                 {
@@ -322,36 +425,15 @@ public class ThetaDataClient : IThetaDataClient
                                     }
                                 }
 
-                                DateOnly expDate = snapDate.AddDays(7);
-                                if (item.TryGetProperty("expiration", out var expElem))
-                                {
-                                    if (expElem.ValueKind == JsonValueKind.Number)
-                                    {
-                                        int intExp = expElem.GetInt32();
-                                        expDate = new DateOnly(intExp / 10000, (intExp % 10000) / 100, intExp % 100);
-                                    }
-                                    else if (DateOnly.TryParse(expElem.GetString(), out var pexp))
-                                    {
-                                        expDate = pexp;
-                                    }
-                                }
-
                                 var dte = (expDate.ToDateTime(TimeOnly.MinValue) - snapDate.ToDateTime(TimeOnly.MinValue)).Days;
                                 if (dte < 0) continue;
-
-                                decimal strike = item.TryGetProperty("strike", out var stk) ? stk.GetDecimal() : 0m;
-                                if (strike > 1000) strike /= 1000m;
-
-                                var rightStr = item.TryGetProperty("right", out var rElem) ? rElem.GetString()?.ToUpperInvariant() ?? "C" : "C";
-                                var side = rightStr.StartsWith("P") ? OptionSide.Put : OptionSide.Call;
 
                                 decimal close = item.TryGetProperty("close", out var cElem) ? cElem.GetDecimal() : 0m;
                                 decimal low = item.TryGetProperty("low", out var lElem) ? lElem.GetDecimal() : 0m;
                                 decimal high = item.TryGetProperty("high", out var hElem) ? hElem.GetDecimal() : 0m;
+                                decimal bid = item.TryGetProperty("bid", out var bElem) ? bElem.GetDecimal() : Math.Max(0.01m, low);
+                                decimal ask = item.TryGetProperty("ask", out var aElem) ? aElem.GetDecimal() : Math.Max(bid, high > 0 ? high : close);
                                 long vol = item.TryGetProperty("volume", out var vElem) && vElem.ValueKind == JsonValueKind.Number ? vElem.GetInt64() : 0;
-
-                                decimal bid = Math.Max(0.01m, low);
-                                decimal ask = Math.Max(bid, high > 0 ? high : close);
                                 decimal mid = (bid + ask) / 2m;
 
                                 var optSymbol = OCCParser.Format(symbol, expDate, side, strike);
