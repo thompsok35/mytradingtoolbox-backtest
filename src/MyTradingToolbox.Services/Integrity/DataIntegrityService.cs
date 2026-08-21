@@ -214,8 +214,22 @@ public class DataIntegrityService : IDataIntegrityService
         if (date.Month == 5 && date.DayOfWeek == DayOfWeek.Monday && date.Day >= 25) return false;
         // Juneteenth (June 19)
         if (date.Month == 6 && date.Day == 19) return false;
-        // Independence Day (July 4)
+        // Independence Day (July 4 or observed July 3 if July 4 is Sat)
         if (date.Month == 7 && date.Day == 4) return false;
+        if (date.Month == 7 && date.Day == 3 && date.DayOfWeek == DayOfWeek.Friday) return false;
+        if (date.Month == 7 && date.Day == 5 && date.DayOfWeek == DayOfWeek.Monday) return false;
+
+        // Juneteenth observed
+        if (date.Month == 6 && date.Day == 18 && date.DayOfWeek == DayOfWeek.Friday) return false;
+        if (date.Month == 6 && date.Day == 20 && date.DayOfWeek == DayOfWeek.Monday) return false;
+
+        // Christmas / New Year observed
+        if (date.Month == 12 && date.Day == 24 && date.DayOfWeek == DayOfWeek.Friday) return false;
+        if (date.Month == 12 && date.Day == 26 && date.DayOfWeek == DayOfWeek.Monday) return false;
+
+        // Good Friday (2025: Apr 18, 2026: Apr 3, 2027: Mar 26, 2028: Apr 14)
+        if (date == new DateOnly(2025, 4, 18) || date == new DateOnly(2026, 4, 3) || date == new DateOnly(2027, 3, 26)) return false;
+
         // Labor Day: 1st Monday in September
         if (date.Month == 9 && date.DayOfWeek == DayOfWeek.Monday && date.Day <= 7) return false;
         // Thanksgiving: 4th Thursday in November
