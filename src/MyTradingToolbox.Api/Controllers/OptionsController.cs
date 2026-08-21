@@ -73,14 +73,22 @@ public class OptionsController : ControllerBase
         var snapshots = await _optionRepo.GetChainAsync(filter, ct);
         
         decimal underlyingPrice = 0m;
-        if (snapshots.Count > 0)
+        if (snapshots.Count > 0 && snapshots.First().UnderlyingPrice > 0)
         {
             underlyingPrice = snapshots.First().UnderlyingPrice;
         }
         else
         {
-            var candle = await _candleRepo.GetLatestCandleAsync(symbol, ct);
-            if (candle != null) underlyingPrice = candle.Close;
+            var candleList = await _candleRepo.GetCandlesAsync(symbol, date.Value, date.Value, ct);
+            if (candleList.Count > 0)
+            {
+                underlyingPrice = candleList[0].Close;
+            }
+            else
+            {
+                var candle = await _candleRepo.GetLatestCandleAsync(symbol, ct);
+                if (candle != null) underlyingPrice = candle.Close;
+            }
         }
 
         var calls = snapshots

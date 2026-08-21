@@ -162,7 +162,16 @@ public class ThetaDataClient : IThetaDataClient
                 {
                     using var doc = JsonDocument.Parse(content);
                     var root = doc.RootElement;
-                    var items = root.TryGetProperty("response", out var rProp) ? rProp : root;
+
+                    JsonElement items = root;
+                    if (root.TryGetProperty("data", out var dProp) && dProp.ValueKind == JsonValueKind.Array)
+                    {
+                        items = dProp;
+                    }
+                    else if (root.TryGetProperty("response", out var rProp) && rProp.ValueKind == JsonValueKind.Array)
+                    {
+                        items = rProp;
+                    }
 
                     if (items.ValueKind == JsonValueKind.Array)
                     {
@@ -183,6 +192,14 @@ public class ThetaDataClient : IThetaDataClient
                                         cDate = pd;
                                     }
                                 }
+                                else if (item.TryGetProperty("created", out var crElem) && DateTime.TryParse(crElem.GetString(), out var crDt))
+                                {
+                                    cDate = DateOnly.FromDateTime(crDt);
+                                }
+                                else if (item.TryGetProperty("last_trade", out var ltElem) && DateTime.TryParse(ltElem.GetString(), out var ltDt))
+                                {
+                                    cDate = DateOnly.FromDateTime(ltDt);
+                                }
 
                                 decimal open = item.TryGetProperty("open", out var o) ? o.GetDecimal() : 0m;
                                 decimal high = item.TryGetProperty("high", out var h) ? h.GetDecimal() : 0m;
@@ -190,19 +207,22 @@ public class ThetaDataClient : IThetaDataClient
                                 decimal close = item.TryGetProperty("close", out var c) ? c.GetDecimal() : 0m;
                                 long vol = item.TryGetProperty("volume", out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : 0;
 
-                                candles.Add(new HistoricalStockCandle
+                                if (open > 0 || high > 0 || low > 0 || close > 0)
                                 {
-                                    Id = Guid.NewGuid(),
-                                    Symbol = symbol,
-                                    Date = cDate,
-                                    Open = open,
-                                    High = high,
-                                    Low = low,
-                                    Close = close,
-                                    Volume = vol,
-                                    Vwap = (open + high + low + close) / 4m,
-                                    DataSource = DataSource.ThetaData
-                                });
+                                    candles.Add(new HistoricalStockCandle
+                                    {
+                                        Id = Guid.NewGuid(),
+                                        Symbol = symbol,
+                                        Date = cDate,
+                                        Open = open,
+                                        High = high,
+                                        Low = low,
+                                        Close = close,
+                                        Volume = vol,
+                                        Vwap = (open + high + low + close) / 4m,
+                                        DataSource = DataSource.ThetaData
+                                    });
+                                }
                             }
                         }
                     }

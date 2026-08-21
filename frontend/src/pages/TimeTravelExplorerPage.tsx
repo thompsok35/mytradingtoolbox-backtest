@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Calendar, Filter, TrendingUp, BarChart3, LineChart, Layers, Search } from 'lucide-react';
 import { MarketApi } from '../services/api';
 import { OptionChainResponseDto, OptionContractDto, WatchlistSymbol } from '../types';
@@ -91,7 +91,7 @@ export const TimeTravelExplorerPage: React.FC = () => {
   const callsByStrike = new Map(filteredCalls.map(c => [c.strike, c]));
   const putsByStrike = new Map(filteredPuts.map(p => [p.strike, p]));
 
-  const spot = chainData?.underlyingPrice || 100;
+  const spot = chainData?.underlyingPrice || 0;
 
   return (
     <div className="space-y-6">

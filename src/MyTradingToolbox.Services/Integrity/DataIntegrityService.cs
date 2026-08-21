@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using MyTradingToolbox.Core.Entities;
 using MyTradingToolbox.Core.Enums;
@@ -76,9 +76,9 @@ public class DataIntegrityService : IDataIntegrityService
         audit.ActualDaysPresent = dates.Count;
         audit.MissingDatesJson = JsonSerializer.Serialize(missingDays);
 
-        // Check for corrupted quotes (Bid > Ask or Bid < 0 or missing strikes)
+        // Check for corrupted quotes (Bid > Ask or Bid < 0 or Strike <= 0)
         var allQuotes = await _optionRepo.GetChainAsync(new OptionChainFilter { Symbol = symbol }, ct);
-        int corruptCount = allQuotes.Count(q => q.Bid > q.Ask || q.Bid < 0 || q.Strike <= 0 || q.UnderlyingPrice <= 0);
+        int corruptCount = allQuotes.Count(q => q.Bid > q.Ask || q.Bid < 0 || q.Strike <= 0);
         audit.CorruptQuotesCount = corruptCount;
 
         decimal completenessRatio = expectedTradingDays.Count > 0
