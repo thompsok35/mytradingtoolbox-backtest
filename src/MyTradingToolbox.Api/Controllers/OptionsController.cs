@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using MyTradingToolbox.Core.Entities;
 using MyTradingToolbox.Core.Enums;
 using MyTradingToolbox.Core.Interfaces;
@@ -141,6 +141,16 @@ public class OptionsController : ControllerBase
             Calls = calls,
             Puts = puts
         });
+    }
+
+    /// <summary>
+    /// Returns all available snapshot dates for a symbol
+    /// </summary>
+    [HttpGet("dates/{symbol}")]
+    public async Task<ActionResult<List<DateOnly>>> GetAvailableDates(string symbol, CancellationToken ct)
+    {
+        var dates = await _optionRepo.GetAvailableDatesAsync(symbol, ct);
+        return Ok(dates);
     }
 
     /// <summary>
