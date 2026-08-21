@@ -1,3 +1,5 @@
+﻿using System.Globalization;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -47,6 +49,8 @@ public class ThetaDataClient : IThetaDataClient
 
         if (!baseUrl.EndsWith("/")) baseUrl += "/";
         _httpClient.BaseAddress = new Uri(baseUrl);
+        _httpClient.DefaultRequestHeaders.Accept.Clear();
+        _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         _httpClient.Timeout = TimeSpan.FromSeconds(120);
     }
 
@@ -54,7 +58,7 @@ public class ThetaDataClient : IThetaDataClient
     {
         try
         {
-            var res = await _httpClient.GetAsync("stock/list/symbols", ct);
+            var res = await _httpClient.GetAsync("stock/list/symbols?format=json", ct);
             return res.IsSuccessStatusCode;
         }
         catch (Exception ex)
@@ -71,33 +75,49 @@ public class ThetaDataClient : IThetaDataClient
 
         try
         {
-            var url = $"option/list/expirations?symbol={symbol}";
+            var url = $"option/list/expirations?symbol={symbol}&format=json";
             var response = await _httpClient.GetAsync(url, ct);
-            var json = await response.Content.ReadAsStringAsync(ct);
+            var content = await response.Content.ReadAsStringAsync(ct);
 
             if (!response.IsSuccessStatusCode)
             {
-                throw new HttpRequestException($"ThetaData v3 option/list/expirations failed: HTTP {response.StatusCode} - {json}");
+                throw new HttpRequestException($"ThetaData v3 option/list/expirations failed: HTTP {response.StatusCode} - {content}");
             }
 
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            JsonElement expArray = root;
-            if (root.TryGetProperty("response", out var rProp))
+            content = content.Trim();
+            if (content.StartsWith("{") || content.StartsWith("["))
             {
-                expArray = rProp;
-            }
+                using var doc = JsonDocument.Parse(content);
+                var root = doc.RootElement;
 
-            if (expArray.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in expArray.EnumerateArray())
+                var expArray = root.TryGetProperty("response", out var rProp) ? rProp : root;
+                if (expArray.ValueKind == JsonValueKind.Array)
                 {
-                    if (item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out var intDate))
+                    foreach (var item in expArray.EnumerateArray())
+                    {
+                        if (item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out var intDate))
+                        {
+                            expirations.Add(new DateOnly(intDate / 10000, (intDate % 10000) / 100, intDate % 100));
+                        }
+                        else if (item.ValueKind == JsonValueKind.String && DateOnly.TryParse(item.GetString(), out var d))
+                        {
+                            expirations.Add(d);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Parse CSV
+                var lines = content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var line in lines.Skip(1))
+                {
+                    var val = line.Trim();
+                    if (int.TryParse(val, out var intDate) && intDate > 19000000)
                     {
                         expirations.Add(new DateOnly(intDate / 10000, (intDate % 10000) / 100, intDate % 100));
                     }
-                    else if (item.ValueKind == JsonValueKind.String && DateOnly.TryParse(item.GetString(), out var d))
+                    else if (DateOnly.TryParse(val, out var d))
                     {
                         expirations.Add(d);
                     }
@@ -124,48 +144,99 @@ public class ThetaDataClient : IThetaDataClient
             var chunkEnd = chunkStart.AddDays(180) > to ? to : chunkStart.AddDays(180);
             var startStr = $"{chunkStart:yyyyMMdd}";
             var endStr = $"{chunkEnd:yyyyMMdd}";
-            var url = $"stock/history/eod?symbol={symbol}&start_date={startStr}&end_date={endStr}";
+            var url = $"stock/history/eod?symbol={symbol}&start_date={startStr}&end_date={endStr}&format=json";
 
             try
             {
                 var response = await _httpClient.GetAsync(url, ct);
-                var json = await response.Content.ReadAsStringAsync(ct);
+                var content = await response.Content.ReadAsStringAsync(ct);
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogError("ThetaData v3 stock history failed: {Url} -> HTTP {Status}: {Body}", url, response.StatusCode, json);
-                    throw new HttpRequestException($"ThetaData Terminal stock history failed: HTTP {response.StatusCode} - {json}");
+                    _logger.LogError("ThetaData v3 stock history failed: {Url} -> HTTP {Status}: {Body}", url, response.StatusCode, content);
+                    throw new HttpRequestException($"ThetaData Terminal stock history failed: HTTP {response.StatusCode} - {content}");
                 }
 
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-
-                var items = root.TryGetProperty("response", out var rProp) ? rProp : root;
-                if (items.ValueKind == JsonValueKind.Array)
+                content = content.Trim();
+                if (content.StartsWith("{") || content.StartsWith("["))
                 {
-                    foreach (var item in items.EnumerateArray())
+                    using var doc = JsonDocument.Parse(content);
+                    var root = doc.RootElement;
+                    var items = root.TryGetProperty("response", out var rProp) ? rProp : root;
+
+                    if (items.ValueKind == JsonValueKind.Array)
                     {
-                        if (item.ValueKind == JsonValueKind.Object)
+                        foreach (var item in items.EnumerateArray())
                         {
-                            DateOnly cDate = chunkStart;
-                            if (item.TryGetProperty("date", out var dElem))
+                            if (item.ValueKind == JsonValueKind.Object)
                             {
-                                if (dElem.ValueKind == JsonValueKind.Number)
+                                DateOnly cDate = chunkStart;
+                                if (item.TryGetProperty("date", out var dElem))
                                 {
-                                    int intDate = dElem.GetInt32();
-                                    cDate = new DateOnly(intDate / 10000, (intDate % 10000) / 100, intDate % 100);
+                                    if (dElem.ValueKind == JsonValueKind.Number)
+                                    {
+                                        int intDate = dElem.GetInt32();
+                                        cDate = new DateOnly(intDate / 10000, (intDate % 10000) / 100, intDate % 100);
+                                    }
+                                    else if (DateOnly.TryParse(dElem.GetString(), out var pd))
+                                    {
+                                        cDate = pd;
+                                    }
                                 }
-                                else if (DateOnly.TryParse(dElem.GetString(), out var pd))
+
+                                decimal open = item.TryGetProperty("open", out var o) ? o.GetDecimal() : 0m;
+                                decimal high = item.TryGetProperty("high", out var h) ? h.GetDecimal() : 0m;
+                                decimal low = item.TryGetProperty("low", out var l) ? l.GetDecimal() : 0m;
+                                decimal close = item.TryGetProperty("close", out var c) ? c.GetDecimal() : 0m;
+                                long vol = item.TryGetProperty("volume", out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : 0;
+
+                                candles.Add(new HistoricalStockCandle
                                 {
-                                    cDate = pd;
-                                }
+                                    Id = Guid.NewGuid(),
+                                    Symbol = symbol,
+                                    Date = cDate,
+                                    Open = open,
+                                    High = high,
+                                    Low = low,
+                                    Close = close,
+                                    Volume = vol,
+                                    Vwap = (open + high + low + close) / 4m,
+                                    DataSource = DataSource.ThetaData
+                                });
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // Parse CSV
+                    var lines = content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (lines.Length > 1)
+                    {
+                        var headers = lines[0].Split(',').Select(h => h.Trim().ToLowerInvariant()).ToList();
+                        int dateIdx = headers.IndexOf("date");
+                        int openIdx = headers.IndexOf("open");
+                        int highIdx = headers.IndexOf("high");
+                        int lowIdx = headers.IndexOf("low");
+                        int closeIdx = headers.IndexOf("close");
+                        int volIdx = headers.IndexOf("volume");
+
+                        foreach (var line in lines.Skip(1))
+                        {
+                            var parts = line.Split(',');
+                            if (parts.Length < headers.Count) continue;
+
+                            DateOnly cDate = chunkStart;
+                            if (dateIdx >= 0 && int.TryParse(parts[dateIdx], out var idt))
+                            {
+                                cDate = new DateOnly(idt / 10000, (idt % 10000) / 100, idt % 100);
                             }
 
-                            decimal open = item.TryGetProperty("open", out var o) ? o.GetDecimal() : 0m;
-                            decimal high = item.TryGetProperty("high", out var h) ? h.GetDecimal() : 0m;
-                            decimal low = item.TryGetProperty("low", out var l) ? l.GetDecimal() : 0m;
-                            decimal close = item.TryGetProperty("close", out var c) ? c.GetDecimal() : 0m;
-                            long vol = item.TryGetProperty("volume", out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : 0;
+                            decimal open = openIdx >= 0 && decimal.TryParse(parts[openIdx], NumberStyles.Any, CultureInfo.InvariantCulture, out var oVal) ? oVal : 0m;
+                            decimal high = highIdx >= 0 && decimal.TryParse(parts[highIdx], NumberStyles.Any, CultureInfo.InvariantCulture, out var hVal) ? hVal : 0m;
+                            decimal low = lowIdx >= 0 && decimal.TryParse(parts[lowIdx], NumberStyles.Any, CultureInfo.InvariantCulture, out var lVal) ? lVal : 0m;
+                            decimal close = closeIdx >= 0 && decimal.TryParse(parts[closeIdx], NumberStyles.Any, CultureInfo.InvariantCulture, out var cVal) ? cVal : 0m;
+                            long vol = volIdx >= 0 && long.TryParse(parts[volIdx], out var vVal) ? vVal : 0;
 
                             candles.Add(new HistoricalStockCandle
                             {
@@ -210,100 +281,179 @@ public class ThetaDataClient : IThetaDataClient
             var startStr = $"{chunkStart:yyyyMMdd}";
             var endStr = $"{chunkEnd:yyyyMMdd}";
 
-            // ThetaData v3 Option EOD History: /v3/option/history/eod?symbol={symbol}&expiration=*&start_date={start}&end_date={end}
-            var url = $"option/history/eod?symbol={symbol}&expiration=*&start_date={startStr}&end_date={endStr}";
+            // Query with format=json
+            var url = $"option/history/eod?symbol={symbol}&expiration=*&start_date={startStr}&end_date={endStr}&format=json";
 
             try
             {
                 var response = await _httpClient.GetAsync(url, ct);
-                var json = await response.Content.ReadAsStringAsync(ct);
+                var content = await response.Content.ReadAsStringAsync(ct);
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogError("ThetaData v3 option/history/eod failed: HTTP {Status}: {Body}", response.StatusCode, json);
-                    throw new HttpRequestException($"ThetaData Terminal v3 options failed: HTTP {response.StatusCode} - {json}");
+                    _logger.LogError("ThetaData v3 option/history/eod failed: HTTP {Status}: {Body}", response.StatusCode, content);
+                    throw new HttpRequestException($"ThetaData Terminal v3 options failed: HTTP {response.StatusCode} - {content}");
                 }
 
-                using var doc = JsonDocument.Parse(json);
-                var root = doc.RootElement;
-
-                var items = root.TryGetProperty("response", out var rProp) ? rProp : root;
-                if (items.ValueKind == JsonValueKind.Array)
+                content = content.Trim();
+                if (content.StartsWith("{") || content.StartsWith("["))
                 {
-                    foreach (var item in items.EnumerateArray())
+                    using var doc = JsonDocument.Parse(content);
+                    var root = doc.RootElement;
+                    var items = root.TryGetProperty("response", out var rProp) ? rProp : root;
+
+                    if (items.ValueKind == JsonValueKind.Array)
                     {
-                        if (item.ValueKind == JsonValueKind.Object)
+                        foreach (var item in items.EnumerateArray())
                         {
-                            DateOnly snapDate = chunkStart;
-                        if (item.TryGetProperty("date", out var dElem))
-                        {
-                            if (dElem.ValueKind == JsonValueKind.Number)
+                            if (item.ValueKind == JsonValueKind.Object)
                             {
-                                int intDate = dElem.GetInt32();
-                                snapDate = new DateOnly(intDate / 10000, (intDate % 10000) / 100, intDate % 100);
-                            }
-                            else if (DateOnly.TryParse(dElem.GetString(), out var pd))
-                            {
-                                snapDate = pd;
+                                DateOnly snapDate = chunkStart;
+                                if (item.TryGetProperty("date", out var dElem))
+                                {
+                                    if (dElem.ValueKind == JsonValueKind.Number)
+                                    {
+                                        int intDate = dElem.GetInt32();
+                                        snapDate = new DateOnly(intDate / 10000, (intDate % 10000) / 100, intDate % 100);
+                                    }
+                                    else if (DateOnly.TryParse(dElem.GetString(), out var pd))
+                                    {
+                                        snapDate = pd;
+                                    }
+                                }
+
+                                DateOnly expDate = snapDate.AddDays(7);
+                                if (item.TryGetProperty("expiration", out var expElem))
+                                {
+                                    if (expElem.ValueKind == JsonValueKind.Number)
+                                    {
+                                        int intExp = expElem.GetInt32();
+                                        expDate = new DateOnly(intExp / 10000, (intExp % 10000) / 100, intExp % 100);
+                                    }
+                                    else if (DateOnly.TryParse(expElem.GetString(), out var pexp))
+                                    {
+                                        expDate = pexp;
+                                    }
+                                }
+
+                                var dte = (expDate.ToDateTime(TimeOnly.MinValue) - snapDate.ToDateTime(TimeOnly.MinValue)).Days;
+                                if (dte < 0) continue;
+
+                                decimal strike = item.TryGetProperty("strike", out var stk) ? stk.GetDecimal() : 0m;
+                                if (strike > 1000) strike /= 1000m;
+
+                                var rightStr = item.TryGetProperty("right", out var rElem) ? rElem.GetString()?.ToUpperInvariant() ?? "C" : "C";
+                                var side = rightStr.StartsWith("P") ? OptionSide.Put : OptionSide.Call;
+
+                                decimal close = item.TryGetProperty("close", out var cElem) ? cElem.GetDecimal() : 0m;
+                                decimal low = item.TryGetProperty("low", out var lElem) ? lElem.GetDecimal() : 0m;
+                                decimal high = item.TryGetProperty("high", out var hElem) ? hElem.GetDecimal() : 0m;
+                                long vol = item.TryGetProperty("volume", out var vElem) && vElem.ValueKind == JsonValueKind.Number ? vElem.GetInt64() : 0;
+
+                                decimal bid = Math.Max(0.01m, low);
+                                decimal ask = Math.Max(bid, high > 0 ? high : close);
+                                decimal mid = (bid + ask) / 2m;
+
+                                var optSymbol = OCCParser.Format(symbol, expDate, side, strike);
+
+                                snapshots.Add(new HistoricalOptionSnapshot
+                                {
+                                    Id = Guid.NewGuid(),
+                                    UnderlyingSymbol = symbol,
+                                    SnapshotDate = snapDate,
+                                    OptionSymbol = optSymbol,
+                                    ExpirationDate = expDate,
+                                    DTE = dte,
+                                    Strike = strike,
+                                    Side = side,
+                                    Bid = bid,
+                                    Ask = ask,
+                                    Mid = mid,
+                                    Last = close,
+                                    UnderlyingPrice = 0m,
+                                    Volume = vol,
+                                    OpenInterest = 0,
+                                    DataSource = DataSource.ThetaData
+                                });
                             }
                         }
-
-                        DateOnly expDate = snapDate.AddDays(7);
-                        if (item.TryGetProperty("expiration", out var expElem))
-                        {
-                            if (expElem.ValueKind == JsonValueKind.Number)
-                            {
-                                int intExp = expElem.GetInt32();
-                                expDate = new DateOnly(intExp / 10000, (intExp % 10000) / 100, intExp % 100);
-                            }
-                            else if (DateOnly.TryParse(expElem.GetString(), out var pexp))
-                            {
-                                expDate = pexp;
-                            }
-                        }
-
-                        var dte = (expDate.ToDateTime(TimeOnly.MinValue) - snapDate.ToDateTime(TimeOnly.MinValue)).Days;
-                        if (dte < 0) continue;
-
-                        decimal strike = item.TryGetProperty("strike", out var stk) ? stk.GetDecimal() : 0m;
-                        if (strike > 1000) strike /= 1000m; // Handle mills format
-
-                        var rightStr = item.TryGetProperty("right", out var rElem) ? rElem.GetString()?.ToUpperInvariant() ?? "C" : "C";
-                        var side = rightStr.StartsWith("P") ? OptionSide.Put : OptionSide.Call;
-
-                        decimal close = item.TryGetProperty("close", out var cElem) ? cElem.GetDecimal() : 0m;
-                        decimal low = item.TryGetProperty("low", out var lElem) ? lElem.GetDecimal() : 0m;
-                        decimal high = item.TryGetProperty("high", out var hElem) ? hElem.GetDecimal() : 0m;
-                        long vol = item.TryGetProperty("volume", out var vElem) && vElem.ValueKind == JsonValueKind.Number ? vElem.GetInt64() : 0;
-
-                        decimal bid = Math.Max(0.01m, low);
-                        decimal ask = Math.Max(bid, high > 0 ? high : close);
-                        decimal mid = (bid + ask) / 2m;
-
-                        var optSymbol = OCCParser.Format(symbol, expDate, side, strike);
-
-                        snapshots.Add(new HistoricalOptionSnapshot
-                        {
-                            Id = Guid.NewGuid(),
-                            UnderlyingSymbol = symbol,
-                            SnapshotDate = snapDate,
-                            OptionSymbol = optSymbol,
-                            ExpirationDate = expDate,
-                            DTE = dte,
-                            Strike = strike,
-                            Side = side,
-                            Bid = bid,
-                            Ask = ask,
-                            Mid = mid,
-                            Last = close,
-                            UnderlyingPrice = 0m,
-                            Volume = vol,
-                            OpenInterest = 0,
-                            DataSource = DataSource.ThetaData
-                        });
                     }
                 }
-            }
+                else
+                {
+                    // Parse CSV lines
+                    var lines = content.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (lines.Length > 1)
+                    {
+                        var headers = lines[0].Split(',').Select(h => h.Trim().ToLowerInvariant()).ToList();
+                        int dateIdx = headers.IndexOf("date");
+                        int expIdx = headers.IndexOf("expiration");
+                        int strikeIdx = headers.IndexOf("strike");
+                        int rightIdx = headers.IndexOf("right");
+                        int closeIdx = headers.IndexOf("close");
+                        int lowIdx = headers.IndexOf("low");
+                        int highIdx = headers.IndexOf("high");
+                        int volIdx = headers.IndexOf("volume");
+
+                        foreach (var line in lines.Skip(1))
+                        {
+                            var parts = line.Split(',');
+                            if (parts.Length < headers.Count) continue;
+
+                            DateOnly snapDate = chunkStart;
+                            if (dateIdx >= 0 && int.TryParse(parts[dateIdx], out var idt))
+                            {
+                                snapDate = new DateOnly(idt / 10000, (idt % 10000) / 100, idt % 100);
+                            }
+
+                            DateOnly expDate = snapDate.AddDays(7);
+                            if (expIdx >= 0 && int.TryParse(parts[expIdx], out var iexp))
+                            {
+                                expDate = new DateOnly(iexp / 10000, (iexp % 10000) / 100, iexp % 100);
+                            }
+
+                            var dte = (expDate.ToDateTime(TimeOnly.MinValue) - snapDate.ToDateTime(TimeOnly.MinValue)).Days;
+                            if (dte < 0) continue;
+
+                            decimal strike = strikeIdx >= 0 && decimal.TryParse(parts[strikeIdx], NumberStyles.Any, CultureInfo.InvariantCulture, out var sVal) ? sVal : 0m;
+                            if (strike > 1000) strike /= 1000m;
+
+                            var rightStr = rightIdx >= 0 ? parts[rightIdx].Trim().ToUpperInvariant() : "C";
+                            var side = rightStr.StartsWith("P") ? OptionSide.Put : OptionSide.Call;
+
+                            decimal close = closeIdx >= 0 && decimal.TryParse(parts[closeIdx], NumberStyles.Any, CultureInfo.InvariantCulture, out var cVal) ? cVal : 0m;
+                            decimal low = lowIdx >= 0 && decimal.TryParse(parts[lowIdx], NumberStyles.Any, CultureInfo.InvariantCulture, out var lVal) ? lVal : 0m;
+                            decimal high = highIdx >= 0 && decimal.TryParse(parts[highIdx], NumberStyles.Any, CultureInfo.InvariantCulture, out var hVal) ? hVal : 0m;
+                            long vol = volIdx >= 0 && long.TryParse(parts[volIdx], out var vVal) ? vVal : 0;
+
+                            decimal bid = Math.Max(0.01m, low);
+                            decimal ask = Math.Max(bid, high > 0 ? high : close);
+                            decimal mid = (bid + ask) / 2m;
+
+                            var optSymbol = OCCParser.Format(symbol, expDate, side, strike);
+
+                            snapshots.Add(new HistoricalOptionSnapshot
+                            {
+                                Id = Guid.NewGuid(),
+                                UnderlyingSymbol = symbol,
+                                SnapshotDate = snapDate,
+                                OptionSymbol = optSymbol,
+                                ExpirationDate = expDate,
+                                DTE = dte,
+                                Strike = strike,
+                                Side = side,
+                                Bid = bid,
+                                Ask = ask,
+                                Mid = mid,
+                                Last = close,
+                                UnderlyingPrice = 0m,
+                                Volume = vol,
+                                OpenInterest = 0,
+                                DataSource = DataSource.ThetaData
+                            });
+                        }
+                    }
+                }
             }
             catch (Exception ex)
             {
