@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using MyTradingToolbox.Core.Entities;
 using MyTradingToolbox.Core.Enums;
 using MyTradingToolbox.Core.Interfaces;
@@ -179,14 +179,23 @@ public class HarvestOrchestrator : IHarvestOrchestrator
                 IsActiveHarvesting = true
             }, ct);
 
-            var candles = await _tradierClient.FetchHistoricalStockCandlesAsync(symbol, from, to, ct);
-            if (candles.Count > 0)
-            {
-                await _candleRepo.UpsertCandlesAsync(candles, ct);
-            }
+            List<HistoricalStockCandle> candles = new();
 
             if (source == JobType.ThetaDataSeed)
             {
+                try
+                {
+                    candles = await _thetaDataClient.FetchHistoricalStockCandlesAsync(symbol, from, to, ct);
+                    if (candles.Count > 0)
+                    {
+                        await _candleRepo.UpsertCandlesAsync(candles, ct);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not fetch stock candles from ThetaData for {Symbol}", symbol);
+                }
+
                 var snapshots = await _thetaDataClient.FetchEodHistoricalRangeAsync(symbol, from, to, ct);
                 rowsCount = await _optionRepo.UpsertSnapshotsAsync(snapshots, ct);
             }
@@ -208,6 +217,19 @@ public class HarvestOrchestrator : IHarvestOrchestrator
             }
             else
             {
+                try
+                {
+                    candles = await _tradierClient.FetchHistoricalStockCandlesAsync(symbol, from, to, ct);
+                    if (candles.Count > 0)
+                    {
+                        await _candleRepo.UpsertCandlesAsync(candles, ct);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Could not fetch stock candles from Tradier for {Symbol}", symbol);
+                }
+
                 var current = from;
                 var allSnaps = new List<HistoricalOptionSnapshot>();
                 while (current <= to)
