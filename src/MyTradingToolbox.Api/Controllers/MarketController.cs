@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using MyTradingToolbox.Core.Entities;
 using MyTradingToolbox.Core.Interfaces;
 using MyTradingToolbox.Core.Models;
@@ -64,7 +64,17 @@ public class MarketController : ControllerBase
     }
 
     /// <summary>
-    /// Deletes a symbol from the watchlist
+    /// Purges all vaulted option snapshots and candles for a ticker
+    /// </summary>
+    [HttpPost("watchlist/{symbol}/purge")]
+    public async Task<ActionResult> PurgeSymbolData(string symbol, CancellationToken ct)
+    {
+        var count = await _watchlistRepo.PurgeSymbolDataAsync(symbol, ct);
+        return Ok(new { symbol, purgedCount = count, message = $"Successfully purged {count} option snapshot rows and stock candles for {symbol}." });
+    }
+
+    /// <summary>
+    /// Deletes a symbol from the watchlist and cascades removal of all its vaulted records
     /// </summary>
     [HttpDelete("watchlist/{symbol}")]
     public async Task<ActionResult> DeleteSymbol(string symbol, CancellationToken ct)

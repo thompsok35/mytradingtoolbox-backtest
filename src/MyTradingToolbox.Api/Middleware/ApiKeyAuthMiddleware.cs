@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Security.Claims;
 using MyTradingToolbox.Core.Entities;
 using MyTradingToolbox.Core.Interfaces;
@@ -38,6 +38,7 @@ public class ApiKeyAuthMiddleware
                                 path.Equals("/health", StringComparison.OrdinalIgnoreCase) || 
                                 path.Equals("/api/v1/auth/config", StringComparison.OrdinalIgnoreCase) || 
                                 path.Equals("/api/v1/auth/google", StringComparison.OrdinalIgnoreCase) || 
+                                path.Equals("/api/v1/auth/dev-login", StringComparison.OrdinalIgnoreCase) || 
                                 (path.Equals("/api/v1/auth/2fa/verify", StringComparison.OrdinalIgnoreCase) && context.Request.Method == "POST") ||
                                 !path.StartsWith("/api/");
 

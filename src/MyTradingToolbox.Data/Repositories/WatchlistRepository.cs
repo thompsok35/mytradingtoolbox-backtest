@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using MyTradingToolbox.Core.Entities;
 using MyTradingToolbox.Core.Interfaces;
 using MyTradingToolbox.Data.Context;
@@ -93,10 +93,33 @@ public class WatchlistRepository : IWatchlistRepository
         await _db.SaveChangesAsync(ct);
     }
 
+    public async Task<int> PurgeSymbolDataAsync(string symbol, CancellationToken ct = default)
+    {
+        var sym = symbol.Trim().ToUpperInvariant();
+        var snapshots = _db.HistoricalOptionSnapshots.Where(o => o.UnderlyingSymbol == sym);
+        var count = await snapshots.CountAsync(ct);
+        _db.HistoricalOptionSnapshots.RemoveRange(snapshots);
+
+        var candles = _db.HistoricalStockCandles.Where(c => c.Symbol == sym);
+        _db.HistoricalStockCandles.RemoveRange(candles);
+
+        await _db.SaveChangesAsync(ct);
+        await UpdateCoverageStatsAsync(sym, ct);
+        return count;
+    }
+
     public async Task<bool> DeleteAsync(string symbol, CancellationToken ct = default)
     {
-        var item = await GetBySymbolAsync(symbol, ct);
+        var sym = symbol.Trim().ToUpperInvariant();
+        var item = await GetBySymbolAsync(sym, ct);
         if (item == null) return false;
+
+        // Cascade delete all option snapshots and candles for this symbol
+        var snapshots = _db.HistoricalOptionSnapshots.Where(o => o.UnderlyingSymbol == sym);
+        _db.HistoricalOptionSnapshots.RemoveRange(snapshots);
+
+        var candles = _db.HistoricalStockCandles.Where(c => c.Symbol == sym);
+        _db.HistoricalStockCandles.RemoveRange(candles);
 
         _db.WatchlistSymbols.Remove(item);
         await _db.SaveChangesAsync(ct);

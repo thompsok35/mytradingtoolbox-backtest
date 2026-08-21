@@ -1,4 +1,4 @@
-﻿using MyTradingToolbox.Core.Entities;
+using MyTradingToolbox.Core.Entities;
 using MyTradingToolbox.Core.Models;
 
 namespace MyTradingToolbox.Core.Interfaces;
@@ -10,6 +10,7 @@ public interface IWatchlistRepository
     Task<WatchlistSymbol> AddOrUpdateAsync(WatchlistSymbol symbol, CancellationToken ct = default);
     Task<bool> ToggleHarvestingAsync(string symbol, bool isActive, CancellationToken ct = default);
     Task UpdateCoverageStatsAsync(string symbol, CancellationToken ct = default);
+    Task<int> PurgeSymbolDataAsync(string symbol, CancellationToken ct = default);
     Task<bool> DeleteAsync(string symbol, CancellationToken ct = default);
 }
 

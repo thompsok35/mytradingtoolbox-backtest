@@ -1,4 +1,4 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi;
 using MyTradingToolbox.Api.Jobs;
@@ -115,9 +115,10 @@ using (var scope = app.Services.CreateScope())
             );
             CREATE UNIQUE INDEX IF NOT EXISTS ""IX_Users_Email"" ON ""Users"" (""Email"");
 
-            -- Purge all synthetic/simulated data so only verified real vendor data is retained
-            DELETE FROM ""HistoricalOptionSnapshots"" WHERE ""DataSource"" = 'Synthetic';
-            DELETE FROM ""HistoricalStockCandles"" WHERE ""DataSource"" = 'Synthetic';
+            -- Purge all synthetic and legacy UMAC records so only clean real vendor data is retained
+            DELETE FROM ""HistoricalOptionSnapshots"" WHERE ""UnderlyingSymbol"" = 'UMAC' OR ""DataSource"" = 'Synthetic';
+            DELETE FROM ""HistoricalStockCandles"" WHERE ""Symbol"" = 'UMAC' OR ""DataSource"" = 'Synthetic';
+            UPDATE ""WatchlistSymbols"" SET ""TotalOptionRows"" = 0, ""TotalSnapshotDays"" = 0, ""EarliestAvailableDate"" = NULL, ""LatestAvailableDate"" = NULL WHERE ""Symbol"" = 'UMAC';
         ");
     }
     catch (Exception ex)
