@@ -93,51 +93,91 @@ public class OptionsController : ControllerBase
 
         var calls = snapshots
             .Where(s => s.Side == OptionSide.Call)
-            .Select(s => new OptionContractDto
+            .Select(s =>
             {
-                OptionSymbol = s.OptionSymbol,
-                ExpirationDate = s.ExpirationDate,
-                DTE = s.DTE,
-                Strike = s.Strike,
-                Side = s.Side,
-                Bid = s.Bid,
-                Ask = s.Ask,
-                Mid = s.Mid,
-                Last = s.Last,
-                Delta = s.Delta,
-                Gamma = s.Gamma,
-                Theta = s.Theta,
-                Vega = s.Vega,
-                Rho = s.Rho,
-                ImpliedVolatility = s.ImpliedVolatility,
-                Volume = s.Volume,
-                OpenInterest = s.OpenInterest,
-                DataSource = s.DataSource
+                var delta = s.Delta;
+                var iv = s.ImpliedVolatility;
+                var gamma = s.Gamma;
+                var theta = s.Theta;
+                var vega = s.Vega;
+
+                if ((delta == null || delta == 0) && underlyingPrice > 0)
+                {
+                    var greeks = MyTradingToolbox.Services.Greeks.BlackScholesCalculator.ComputeGreeks(
+                        underlyingPrice, s.Strike, s.DTE, s.Side, s.Mid > 0 ? s.Mid : s.Last);
+                    delta = greeks.Delta;
+                    gamma = greeks.Gamma;
+                    theta = greeks.Theta;
+                    vega = greeks.Vega;
+                    iv = greeks.IV;
+                }
+
+                return new OptionContractDto
+                {
+                    OptionSymbol = s.OptionSymbol,
+                    ExpirationDate = s.ExpirationDate,
+                    DTE = s.DTE,
+                    Strike = s.Strike,
+                    Side = s.Side,
+                    Bid = s.Bid,
+                    Ask = s.Ask,
+                    Mid = s.Mid,
+                    Last = s.Last,
+                    Delta = delta,
+                    Gamma = gamma,
+                    Theta = theta,
+                    Vega = vega,
+                    Rho = s.Rho,
+                    ImpliedVolatility = iv,
+                    Volume = s.Volume,
+                    OpenInterest = s.OpenInterest,
+                    DataSource = s.DataSource
+                };
             })
             .ToList();
 
         var puts = snapshots
             .Where(s => s.Side == OptionSide.Put)
-            .Select(s => new OptionContractDto
+            .Select(s =>
             {
-                OptionSymbol = s.OptionSymbol,
-                ExpirationDate = s.ExpirationDate,
-                DTE = s.DTE,
-                Strike = s.Strike,
-                Side = s.Side,
-                Bid = s.Bid,
-                Ask = s.Ask,
-                Mid = s.Mid,
-                Last = s.Last,
-                Delta = s.Delta,
-                Gamma = s.Gamma,
-                Theta = s.Theta,
-                Vega = s.Vega,
-                Rho = s.Rho,
-                ImpliedVolatility = s.ImpliedVolatility,
-                Volume = s.Volume,
-                OpenInterest = s.OpenInterest,
-                DataSource = s.DataSource
+                var delta = s.Delta;
+                var iv = s.ImpliedVolatility;
+                var gamma = s.Gamma;
+                var theta = s.Theta;
+                var vega = s.Vega;
+
+                if ((delta == null || delta == 0) && underlyingPrice > 0)
+                {
+                    var greeks = MyTradingToolbox.Services.Greeks.BlackScholesCalculator.ComputeGreeks(
+                        underlyingPrice, s.Strike, s.DTE, s.Side, s.Mid > 0 ? s.Mid : s.Last);
+                    delta = greeks.Delta;
+                    gamma = greeks.Gamma;
+                    theta = greeks.Theta;
+                    vega = greeks.Vega;
+                    iv = greeks.IV;
+                }
+
+                return new OptionContractDto
+                {
+                    OptionSymbol = s.OptionSymbol,
+                    ExpirationDate = s.ExpirationDate,
+                    DTE = s.DTE,
+                    Strike = s.Strike,
+                    Side = s.Side,
+                    Bid = s.Bid,
+                    Ask = s.Ask,
+                    Mid = s.Mid,
+                    Last = s.Last,
+                    Delta = delta,
+                    Gamma = gamma,
+                    Theta = theta,
+                    Vega = vega,
+                    Rho = s.Rho,
+                    ImpliedVolatility = iv,
+                    Volume = s.Volume,
+                    OpenInterest = s.OpenInterest,
+                    DataSource = s.DataSource
+                };
             })
             .ToList();
 

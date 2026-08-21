@@ -1,4 +1,4 @@
-﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging;
 using MyTradingToolbox.Core.Entities;
 using MyTradingToolbox.Core.Enums;
 using MyTradingToolbox.Core.Interfaces;
@@ -204,6 +204,18 @@ public class BacktestEngine : IBacktestEngine
 
                 if (chain.Count > 0)
                 {
+                    // Compute Greeks dynamically if not pre-stored
+                    foreach (var c in chain)
+                    {
+                        if ((c.Delta == null || c.Delta == 0) && spotPrice > 0)
+                        {
+                            var greeks = Greeks.BlackScholesCalculator.ComputeGreeks(
+                                spotPrice, c.Strike, c.DTE, c.Side, c.Mid > 0 ? c.Mid : c.Last);
+                            c.Delta = greeks.Delta;
+                            c.ImpliedVolatility = greeks.IV;
+                        }
+                    }
+
                     // Select contract closest to TargetDte and TargetDelta
                     var candidate = chain
                         .Where(c => c.Strike <= spotPrice && (c.Delta ?? 0.70m) >= 0.50m) // In The Money call
