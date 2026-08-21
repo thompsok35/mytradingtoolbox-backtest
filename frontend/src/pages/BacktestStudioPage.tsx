@@ -12,22 +12,25 @@ export const BacktestStudioPage: React.FC = () => {
   const [isWizardOpen, setIsWizardOpen] = useState(false);
 
   // Strategy Parameters
-  const [symbol, setSymbol] = useState('AAPL');
-  const [startDate, setStartDate] = useState('2025-01-01');
+  // Strategy Parameters - Aligned with itmCCbot defaults
+  const [symbol, setSymbol] = useState('UMAC');
+  const [startDate, setStartDate] = useState('2025-08-20');
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [initialCapital, setInitialCapital] = useState(50000);
   
   // Position Sizing Methodology
-  const [sizingMode, setSizingMode] = useState<PositionSizingMode>('FixedContracts');
+  const [sizingMode, setSizingMode] = useState<PositionSizingMode>('PortfolioCompoundingPercent');
   const [fixedContracts, setFixedContracts] = useState(1);
   const [fixedDollarBudget, setFixedDollarBudget] = useState(2500);
-  const [allocationPercent, setAllocationPercent] = useState(0.10);
+  const [allocationPercent, setAllocationPercent] = useState(0.05); // 5% cash allocation matching itmCCbot
 
-  // Covered Call Strike & DTE Rules
-  const [targetDelta, setTargetDelta] = useState(0.70);
-  const [targetDte, setTargetDte] = useState(30);
-  const [minDte, setMinDte] = useState(14);
-  const [maxDte, setMaxDte] = useState(45);
+  // ITM Covered Call Risk Rules & Strategy Criteria
+  const [minAnnualizedRoc, setMinAnnualizedRoc] = useState(20); // 20% Min Annualized ROC
+  const [minDownsideBuffer, setMinDownsideBuffer] = useState(5); // 5% Min Downside Cushion
+  const [targetDelta, setTargetDelta] = useState(0.85); // 85% ITM Probability (0.85 Delta)
+  const [targetDte, setTargetDte] = useState(7);
+  const [minDte, setMinDte] = useState(7);
+  const [maxDte, setMaxDte] = useState(13);
   const [profitTargetPct, setProfitTargetPct] = useState(65);
   const [rollOnDeltaBreach, setRollOnDeltaBreach] = useState(true);
   const [rollDeltaThreshold, setRollDeltaThreshold] = useState(0.50);
@@ -40,9 +43,8 @@ export const BacktestStudioPage: React.FC = () => {
         const list = await MarketApi.getWatchlist();
         setSymbols(list);
         if (list.length > 0) {
-          setSymbol(list[0].symbol);
-          if (list[0].earliestAvailableDate) setStartDate(list[0].earliestAvailableDate);
-          if (list[0].latestAvailableDate) setEndDate(list[0].latestAvailableDate);
+          const found = list.find(s => s.symbol === 'UMAC') || list[0];
+          setSymbol(found.symbol);
         }
       } catch (err) {
         console.error('Failed to load symbols:', err);
@@ -65,8 +67,10 @@ export const BacktestStudioPage: React.FC = () => {
         fixedContracts,
         fixedDollarBudget,
         allocationPercent,
+        minAnnualizedRocPercent: minAnnualizedRoc,
+        minDownsideBufferPercent: minDownsideBuffer,
         targetDelta,
-        deltaTolerance: 0.08,
+        deltaTolerance: 0.15,
         targetDte,
         minDte,
         maxDte,
@@ -297,18 +301,51 @@ export const BacktestStudioPage: React.FC = () => {
 
             <div>
               <div className="flex justify-between text-slate-400 mb-1">
-                <span>Target Call Delta</span>
-                <span className="text-blue-400 font-mono font-semibold">{targetDelta.toFixed(2)} Δ (ITM)</span>
+                <span>Min ITM Probability / Delta</span>
+                <span className="text-blue-400 font-mono font-semibold">{(targetDelta * 100).toFixed(0)}% ITM ({targetDelta.toFixed(2)} Δ)</span>
               </div>
               <input
                 type="range"
                 min="0.50"
-                max="0.90"
+                max="0.95"
                 step="0.05"
                 value={targetDelta}
                 onChange={e => setTargetDelta(parseFloat(e.target.value))}
                 className="w-full accent-blue-500"
               />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <div className="flex justify-between text-slate-400 mb-1 text-[11px]">
+                  <span>Min Ann. ROC</span>
+                  <span className="text-emerald-400 font-mono font-semibold">{minAnnualizedRoc}%</span>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  max="500"
+                  step="5"
+                  value={minAnnualizedRoc}
+                  onChange={e => setMinAnnualizedRoc(parseFloat(e.target.value) || 0)}
+                  className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white font-mono text-xs"
+                />
+              </div>
+              <div>
+                <div className="flex justify-between text-slate-400 mb-1 text-[11px]">
+                  <span>Min Buffer</span>
+                  <span className="text-amber-400 font-mono font-semibold">{minDownsideBuffer}%</span>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={minDownsideBuffer}
+                  onChange={e => setMinDownsideBuffer(parseFloat(e.target.value) || 0)}
+                  className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white font-mono text-xs"
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-3 gap-2">

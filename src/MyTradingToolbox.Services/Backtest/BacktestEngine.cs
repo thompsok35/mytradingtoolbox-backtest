@@ -226,17 +226,65 @@ public class BacktestEngine : IBacktestEngine
                         }
                     }
 
-                    // Select contract closest to TargetDte and TargetDelta
-                    var candidate = chain
-                        .Where(c => c.Strike <= spotPrice && (c.Delta ?? 0.70m) >= 0.50m) // In The Money call
-                        .OrderBy(c => Math.Abs(c.DTE - request.TargetDte))
-                        .ThenBy(c => Math.Abs((c.Delta ?? 0.70m) - request.TargetDelta))
-                        .FirstOrDefault();
+                    // Filter candidate options using strategy risk rules
+                    var candidates = chain
+                        .Where(c => c.Strike <= spotPrice)
+                        .Select(c => {
+                            var premium = c.Bid > 0 ? c.Bid : c.Mid;
+                            var debit = spotPrice - premium + request.SlippagePerContract;
+                            var downsideBuffer = spotPrice > 0 ? (premium / spotPrice) * 100m : 0m;
+                            var assignmentProfit = c.Strike - debit;
+                            var dte = Math.Max(1, c.DTE);
+                            var annualizedRoc = debit > 0 ? (assignmentProfit / debit) * (365m / dte) * 100m : -999m;
+                            var delta = c.Delta ?? 0.85m;
+                            return new {
+                                Contract = c,
+                                Premium = premium,
+                                NetDebit = debit,
+                                DownsideBuffer = downsideBuffer,
+                                AssignmentProfit = assignmentProfit,
+                                AnnualizedRoc = annualizedRoc,
+                                Delta = delta
+                            };
+                        })
+                        .Where(x => x.AssignmentProfit > 0 
+                                 && x.DownsideBuffer >= request.MinDownsideBufferPercent
+                                 && x.AnnualizedRoc >= request.MinAnnualizedRocPercent
+                                 && x.Delta >= (request.TargetDelta - request.DeltaTolerance))
+                        .OrderBy(x => Math.Abs(x.Contract.DTE - request.TargetDte))
+                        .ThenByDescending(x => x.AnnualizedRoc)
+                        .ToList();
 
-                    if (candidate != null)
+                    // Fallback to highest Annualized ROC ITM if strictly within delta range has no match
+                    var selected = candidates.FirstOrDefault() 
+                        ?? chain
+                            .Where(c => c.Strike <= spotPrice)
+                            .Select(c => {
+                                var premium = c.Bid > 0 ? c.Bid : c.Mid;
+                                var debit = spotPrice - premium + request.SlippagePerContract;
+                                var downsideBuffer = spotPrice > 0 ? (premium / spotPrice) * 100m : 0m;
+                                var assignmentProfit = c.Strike - debit;
+                                var dte = Math.Max(1, c.DTE);
+                                var annualizedRoc = debit > 0 ? (assignmentProfit / debit) * (365m / dte) * 100m : -999m;
+                                return new {
+                                    Contract = c,
+                                    Premium = premium,
+                                    NetDebit = debit,
+                                    DownsideBuffer = downsideBuffer,
+                                    AssignmentProfit = assignmentProfit,
+                                    AnnualizedRoc = annualizedRoc,
+                                    Delta = c.Delta ?? 0.85m
+                                };
+                            })
+                            .Where(x => x.AssignmentProfit > 0 && x.DownsideBuffer >= request.MinDownsideBufferPercent)
+                            .OrderByDescending(x => x.AnnualizedRoc)
+                            .FirstOrDefault();
+
+                    if (selected != null)
                     {
-                        var callPremium = candidate.Bid > 0 ? candidate.Bid : candidate.Mid;
-                        var netDebitPerShare = spotPrice - callPremium + request.SlippagePerContract;
+                        var candidate = selected.Contract;
+                        var callPremium = selected.Premium;
+                        var netDebitPerShare = selected.NetDebit;
                         var costPerContract = (netDebitPerShare * 100m) + (request.CommissionPerContract * 2);
 
                         if (costPerContract > 0 && currentCash >= costPerContract)

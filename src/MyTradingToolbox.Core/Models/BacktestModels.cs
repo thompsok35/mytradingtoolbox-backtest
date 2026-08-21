@@ -23,12 +23,14 @@ public class BacktestRequest
     public decimal FixedDollarBudget { get; set; } = 2500m;
     public decimal AllocationPercent { get; set; } = 0.10m; // 10% of portfolio cash
 
-    // ITM Covered Call parameters
-    public decimal TargetDelta { get; set; } = 0.70m;
-    public decimal DeltaTolerance { get; set; } = 0.10m;
-    public int TargetDte { get; set; } = 30;
-    public int MinDte { get; set; } = 20;
-    public int MaxDte { get; set; } = 45;
+    // ITM Covered Call Risk Rules & Strategy Criteria
+    public decimal MinAnnualizedRocPercent { get; set; } = 20.0m; // Min 20% annualized return on assignment
+    public decimal MinDownsideBufferPercent { get; set; } = 5.0m; // Min 5% downside cushion (CallPremium / SpotPrice)
+    public decimal TargetDelta { get; set; } = 0.85m;
+    public decimal DeltaTolerance { get; set; } = 0.15m;
+    public int TargetDte { get; set; } = 7;
+    public int MinDte { get; set; } = 7;
+    public int MaxDte { get; set; } = 13;
     public decimal ProfitTargetPercent { get; set; } = 0.65m; // 65% of max profit
     public decimal? StopLossPercent { get; set; } // e.g. 2.0 (200% loss)
     public bool RollOnDeltaBreach { get; set; } = true;

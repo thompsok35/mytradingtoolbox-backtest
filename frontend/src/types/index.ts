@@ -151,6 +151,9 @@ export interface BacktestRequest {
   fixedDollarBudget?: number;
   allocationPercent?: number;
 
+  // ITM Covered Call Risk Rules & Criteria
+  minAnnualizedRocPercent?: number;
+  minDownsideBufferPercent?: number;
   targetDelta: number;
   deltaTolerance?: number;
   targetDte: number;
