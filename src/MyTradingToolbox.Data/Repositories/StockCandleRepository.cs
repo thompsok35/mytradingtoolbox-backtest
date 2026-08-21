@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using MyTradingToolbox.Core.Entities;
 using MyTradingToolbox.Core.Interfaces;
 using MyTradingToolbox.Data.Context;
@@ -36,11 +36,16 @@ public class StockCandleRepository : IStockCandleRepository
 
     public async Task<int> UpsertCandlesAsync(IEnumerable<HistoricalStockCandle> candles, CancellationToken ct = default)
     {
-        var list = candles.ToList();
+        // Deduplicate in-memory entries by Symbol and Date first
+        var list = candles
+            .GroupBy(c => new { Sym = c.Symbol.Trim().ToUpperInvariant(), c.Date })
+            .Select(g => g.Last())
+            .ToList();
+
         if (list.Count == 0) return 0;
 
         int count = 0;
-        var symbols = list.Select(c => c.Symbol.Trim().ToUpperInvariant()).Distinct().ToList();
+        var symbols = list.Select(c => c.Symbol).Distinct().ToList();
         var minDate = list.Min(c => c.Date);
         var maxDate = list.Max(c => c.Date);
 
@@ -50,7 +55,6 @@ public class StockCandleRepository : IStockCandleRepository
 
         foreach (var candle in list)
         {
-            candle.Symbol = candle.Symbol.Trim().ToUpperInvariant();
             var key = $"{candle.Symbol}_{candle.Date:yyyyMMdd}";
 
             if (existing.TryGetValue(key, out var ex))
@@ -68,6 +72,7 @@ public class StockCandleRepository : IStockCandleRepository
                 if (candle.Id == Guid.Empty) candle.Id = Guid.NewGuid();
                 candle.CreatedAt = DateTime.UtcNow;
                 _db.HistoricalStockCandles.Add(candle);
+                existing[key] = candle;
             }
             count++;
         }

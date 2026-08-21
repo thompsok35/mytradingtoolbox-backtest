@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using MyTradingToolbox.Core.Entities;
 using MyTradingToolbox.Core.Interfaces;
 using MyTradingToolbox.Core.Models;
@@ -84,11 +84,11 @@ public class OptionSnapshotRepository : IOptionSnapshotRepository
 
         // Group by SnapshotDate & UnderlyingSymbol to batch process efficiently
         int insertedOrUpdated = 0;
-        var batchGroups = list.GroupBy(s => new { s.UnderlyingSymbol, s.SnapshotDate });
+        var batchGroups = list.GroupBy(s => new { Sym = s.UnderlyingSymbol.Trim().ToUpperInvariant(), s.SnapshotDate });
 
         foreach (var group in batchGroups)
         {
-            var sym = group.Key.UnderlyingSymbol.ToUpperInvariant();
+            var sym = group.Key.Sym;
             var date = group.Key.SnapshotDate;
 
             // Fetch existing snapshots for this symbol and date
@@ -96,9 +96,14 @@ public class OptionSnapshotRepository : IOptionSnapshotRepository
                 .Where(o => o.UnderlyingSymbol == sym && o.SnapshotDate == date)
                 .ToDictionaryAsync(o => o.OptionSymbol, ct);
 
-            foreach (var item in group)
+            // Deduplicate incoming items within the same batch group
+            var uniqueItems = group
+                .GroupBy(i => i.OptionSymbol.Trim().ToUpperInvariant())
+                .Select(g => g.Last());
+
+            foreach (var item in uniqueItems)
             {
-                item.UnderlyingSymbol = item.UnderlyingSymbol.Trim().ToUpperInvariant();
+                item.UnderlyingSymbol = sym;
                 item.OptionSymbol = item.OptionSymbol.Trim().ToUpperInvariant();
                 item.Mid = (item.Bid + item.Ask) / 2m;
 
@@ -125,6 +130,7 @@ public class OptionSnapshotRepository : IOptionSnapshotRepository
                     if (item.Id == Guid.Empty) item.Id = Guid.NewGuid();
                     item.CreatedAt = DateTime.UtcNow;
                     _db.HistoricalOptionSnapshots.Add(item);
+                    existingKeys[item.OptionSymbol] = item;
                 }
                 insertedOrUpdated++;
             }
