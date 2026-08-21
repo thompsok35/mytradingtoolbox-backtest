@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -118,72 +118,79 @@ public class ThetaDataClient : IThetaDataClient
         symbol = symbol.Trim().ToUpperInvariant();
         var candles = new List<HistoricalStockCandle>();
 
-        var startStr = $"{from:yyyyMMdd}";
-        var endStr = $"{to:yyyyMMdd}";
-        var url = $"stock/history/eod?symbol={symbol}&start_date={startStr}&end_date={endStr}";
-
-        try
+        var chunkStart = from;
+        while (chunkStart <= to)
         {
-            var response = await _httpClient.GetAsync(url, ct);
-            var json = await response.Content.ReadAsStringAsync(ct);
+            var chunkEnd = chunkStart.AddDays(180) > to ? to : chunkStart.AddDays(180);
+            var startStr = $"{chunkStart:yyyyMMdd}";
+            var endStr = $"{chunkEnd:yyyyMMdd}";
+            var url = $"stock/history/eod?symbol={symbol}&start_date={startStr}&end_date={endStr}";
 
-            if (!response.IsSuccessStatusCode)
+            try
             {
-                _logger.LogError("ThetaData v3 stock history failed: {Url} -> HTTP {Status}: {Body}", url, response.StatusCode, json);
-                throw new HttpRequestException($"ThetaData Terminal stock history failed: HTTP {response.StatusCode} - {json}");
-            }
+                var response = await _httpClient.GetAsync(url, ct);
+                var json = await response.Content.ReadAsStringAsync(ct);
 
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            var items = root.TryGetProperty("response", out var rProp) ? rProp : root;
-            if (items.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in items.EnumerateArray())
+                if (!response.IsSuccessStatusCode)
                 {
-                    if (item.ValueKind == JsonValueKind.Object)
+                    _logger.LogError("ThetaData v3 stock history failed: {Url} -> HTTP {Status}: {Body}", url, response.StatusCode, json);
+                    throw new HttpRequestException($"ThetaData Terminal stock history failed: HTTP {response.StatusCode} - {json}");
+                }
+
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                var items = root.TryGetProperty("response", out var rProp) ? rProp : root;
+                if (items.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in items.EnumerateArray())
                     {
-                        DateOnly cDate = from;
-                        if (item.TryGetProperty("date", out var dElem))
+                        if (item.ValueKind == JsonValueKind.Object)
                         {
-                            if (dElem.ValueKind == JsonValueKind.Number)
+                            DateOnly cDate = chunkStart;
+                            if (item.TryGetProperty("date", out var dElem))
                             {
-                                int intDate = dElem.GetInt32();
-                                cDate = new DateOnly(intDate / 10000, (intDate % 10000) / 100, intDate % 100);
+                                if (dElem.ValueKind == JsonValueKind.Number)
+                                {
+                                    int intDate = dElem.GetInt32();
+                                    cDate = new DateOnly(intDate / 10000, (intDate % 10000) / 100, intDate % 100);
+                                }
+                                else if (DateOnly.TryParse(dElem.GetString(), out var pd))
+                                {
+                                    cDate = pd;
+                                }
                             }
-                            else if (DateOnly.TryParse(dElem.GetString(), out var pd))
+
+                            decimal open = item.TryGetProperty("open", out var o) ? o.GetDecimal() : 0m;
+                            decimal high = item.TryGetProperty("high", out var h) ? h.GetDecimal() : 0m;
+                            decimal low = item.TryGetProperty("low", out var l) ? l.GetDecimal() : 0m;
+                            decimal close = item.TryGetProperty("close", out var c) ? c.GetDecimal() : 0m;
+                            long vol = item.TryGetProperty("volume", out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : 0;
+
+                            candles.Add(new HistoricalStockCandle
                             {
-                                cDate = pd;
-                            }
+                                Id = Guid.NewGuid(),
+                                Symbol = symbol,
+                                Date = cDate,
+                                Open = open,
+                                High = high,
+                                Low = low,
+                                Close = close,
+                                Volume = vol,
+                                Vwap = (open + high + low + close) / 4m,
+                                DataSource = DataSource.ThetaData
+                            });
                         }
-
-                        decimal open = item.TryGetProperty("open", out var o) ? o.GetDecimal() : 0m;
-                        decimal high = item.TryGetProperty("high", out var h) ? h.GetDecimal() : 0m;
-                        decimal low = item.TryGetProperty("low", out var l) ? l.GetDecimal() : 0m;
-                        decimal close = item.TryGetProperty("close", out var c) ? c.GetDecimal() : 0m;
-                        long vol = item.TryGetProperty("volume", out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt64() : 0;
-
-                        candles.Add(new HistoricalStockCandle
-                        {
-                            Id = Guid.NewGuid(),
-                            Symbol = symbol,
-                            Date = cDate,
-                            Open = open,
-                            High = high,
-                            Low = low,
-                            Close = close,
-                            Volume = vol,
-                            Vwap = (open + high + low + close) / 4m,
-                            DataSource = DataSource.ThetaData
-                        });
                     }
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to retrieve stock candles from ThetaData Terminal for {Symbol}", symbol);
-            throw;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to retrieve stock candles from ThetaData Terminal for {Symbol}", symbol);
+                throw;
+            }
+
+            chunkStart = chunkEnd.AddDays(1);
         }
 
         return candles;
@@ -195,34 +202,39 @@ public class ThetaDataClient : IThetaDataClient
         _logger.LogInformation("Retrieving real historical option chains from ThetaData Terminal v3 for {Symbol} from {From} to {To}", symbol, from, to);
 
         var snapshots = new List<HistoricalOptionSnapshot>();
-        var startStr = $"{from:yyyyMMdd}";
-        var endStr = $"{to:yyyyMMdd}";
 
-        // ThetaData v3 Option EOD History: /v3/option/history/eod?symbol={symbol}&expiration=*&start_date={start}&end_date={end}
-        var url = $"option/history/eod?symbol={symbol}&expiration=*&start_date={startStr}&end_date={endStr}";
-
-        try
+        var chunkStart = from;
+        while (chunkStart <= to)
         {
-            var response = await _httpClient.GetAsync(url, ct);
-            var json = await response.Content.ReadAsStringAsync(ct);
+            var chunkEnd = chunkStart.AddDays(180) > to ? to : chunkStart.AddDays(180);
+            var startStr = $"{chunkStart:yyyyMMdd}";
+            var endStr = $"{chunkEnd:yyyyMMdd}";
 
-            if (!response.IsSuccessStatusCode)
+            // ThetaData v3 Option EOD History: /v3/option/history/eod?symbol={symbol}&expiration=*&start_date={start}&end_date={end}
+            var url = $"option/history/eod?symbol={symbol}&expiration=*&start_date={startStr}&end_date={endStr}";
+
+            try
             {
-                _logger.LogError("ThetaData v3 option/history/eod failed: HTTP {Status}: {Body}", response.StatusCode, json);
-                throw new HttpRequestException($"ThetaData Terminal v3 options failed: HTTP {response.StatusCode} - {json}");
-            }
+                var response = await _httpClient.GetAsync(url, ct);
+                var json = await response.Content.ReadAsStringAsync(ct);
 
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
-
-            var items = root.TryGetProperty("response", out var rProp) ? rProp : root;
-            if (items.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var item in items.EnumerateArray())
+                if (!response.IsSuccessStatusCode)
                 {
-                    if (item.ValueKind == JsonValueKind.Object)
+                    _logger.LogError("ThetaData v3 option/history/eod failed: HTTP {Status}: {Body}", response.StatusCode, json);
+                    throw new HttpRequestException($"ThetaData Terminal v3 options failed: HTTP {response.StatusCode} - {json}");
+                }
+
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                var items = root.TryGetProperty("response", out var rProp) ? rProp : root;
+                if (items.ValueKind == JsonValueKind.Array)
+                {
+                    foreach (var item in items.EnumerateArray())
                     {
-                        DateOnly snapDate = from;
+                        if (item.ValueKind == JsonValueKind.Object)
+                        {
+                            DateOnly snapDate = chunkStart;
                         if (item.TryGetProperty("date", out var dElem))
                         {
                             if (dElem.ValueKind == JsonValueKind.Number)
@@ -292,11 +304,14 @@ public class ThetaDataClient : IThetaDataClient
                     }
                 }
             }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to fetch bulk options from ThetaData Terminal for {Symbol}", symbol);
-            throw new InvalidOperationException($"ThetaData Terminal v3 error for {symbol}: {ex.Message}. Make sure ThetaTerminal is running on port 25503 and logged in.", ex);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch bulk options from ThetaData Terminal for {Symbol}", symbol);
+                throw new InvalidOperationException($"ThetaData Terminal v3 error for {symbol}: {ex.Message}. Make sure ThetaTerminal is running on port 25503 and logged in.", ex);
+            }
+
+            chunkStart = chunkEnd.AddDays(1);
         }
 
         return snapshots;
