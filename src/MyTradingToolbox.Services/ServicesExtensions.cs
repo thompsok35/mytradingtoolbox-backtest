@@ -30,7 +30,7 @@ public static class ServicesExtensions
 
         services.AddHttpClient<IThetaDataClient, ThetaDataClient>(client =>
         {
-            var baseUrl = configuration["MarketData:ThetaDataBaseUrl"] ?? "http://127.0.0.1:25510/v2";
+            var baseUrl = configuration["MarketData:ThetaDataBaseUrl"] ?? configuration["THETADATA_BASE_URL"] ?? "http://127.0.0.1:25503/v3";
             client.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
             client.DefaultRequestHeaders.Add("Accept", "application/json");
         });
