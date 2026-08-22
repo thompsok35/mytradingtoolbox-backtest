@@ -1,4 +1,4 @@
-﻿using FluentAssertions;
+using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using MyTradingToolbox.Core.Models;
@@ -59,5 +59,30 @@ public class CoveredCallBacktestTests
         result.Trades.Should().NotBeEmpty();
         result.Metrics.TotalTrades.Should().BeGreaterThan(0);
         result.DailyEquityCurve.Should().NotBeEmpty();
+        result.Trades.All(t => t.EntryProbITM > 0).Should().BeTrue();
+    }
+
+    [Theory]
+    [InlineData(100, 90, 30)]  // ITM Call: Strike < Spot -> Prob ITM should be high
+    [InlineData(100, 110, 30)] // OTM Call: Strike > Spot -> Prob ITM should be lower
+    public void BlackScholesCalculator_ComputesCorrectProbabilityOfITM(decimal spot, decimal strike, int dte)
+    {
+        var isItm = strike < spot;
+        var estPrice = Math.Max(0.50m, spot - strike + 2.0m);
+        var greeks = Core.Calculators.BlackScholesCalculator.ComputeGreeks(
+            spot, strike, dte, Core.Enums.OptionSide.Call, estPrice);
+
+        if (isItm)
+        {
+            greeks.Delta.Should().BeGreaterThan(0.50m);
+            greeks.ProbabilityOfITM.Should().BeGreaterThan(0.50m);
+            // Delta is mathematically greater than or equal to N(d2) for calls
+            greeks.Delta.Should().BeGreaterThanOrEqualTo(greeks.ProbabilityOfITM - 0.05m);
+        }
+        else
+        {
+            greeks.Delta.Should().BeLessThan(0.50m);
+            greeks.ProbabilityOfITM.Should().BeLessThan(0.50m);
+        }
     }
 }

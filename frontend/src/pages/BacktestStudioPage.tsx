@@ -31,7 +31,6 @@ export const BacktestStudioPage: React.FC = () => {
   const [targetDte, setTargetDte] = useState(7);
   const [minDte, setMinDte] = useState(7);
   const [maxDte, setMaxDte] = useState(13);
-  const [profitTargetPct, setProfitTargetPct] = useState(65);
   const [rollOnDeltaBreach, setRollOnDeltaBreach] = useState(true);
   const [rollDeltaThreshold, setRollDeltaThreshold] = useState(0.50);
   const [slippage, setSlippage] = useState(0.02);
@@ -74,7 +73,6 @@ export const BacktestStudioPage: React.FC = () => {
         targetDte,
         minDte,
         maxDte,
-        profitTargetPercent: profitTargetPct / 100,
         rollOnDeltaBreach,
         rollDeltaThreshold,
         closeDteThreshold: 2,
@@ -301,8 +299,8 @@ export const BacktestStudioPage: React.FC = () => {
 
             <div>
               <div className="flex justify-between text-slate-400 mb-1">
-                <span>Min ITM Probability / Delta</span>
-                <span className="text-blue-400 font-mono font-semibold">{(targetDelta * 100).toFixed(0)}% ITM ({targetDelta.toFixed(2)} Δ)</span>
+                <span className="font-semibold text-slate-300">Target ITM Probability</span>
+                <span className="text-blue-400 font-mono font-bold">{(targetDelta * 100).toFixed(0)}% ITM ({targetDelta.toFixed(2)} Δ)</span>
               </div>
               <input
                 type="range"
@@ -313,6 +311,34 @@ export const BacktestStudioPage: React.FC = () => {
                 onChange={e => setTargetDelta(parseFloat(e.target.value))}
                 className="w-full accent-blue-500"
               />
+              <p className="text-[10px] text-slate-500 mt-1">
+                Highest priority selection criteria. The engine finds contracts strictly closest to {(targetDelta * 100).toFixed(0)}% ITM depth.
+              </p>
+            </div>
+
+            {/* Selection Hierarchy Box */}
+            <div className="p-2.5 bg-slate-950/70 border border-slate-800/80 rounded-lg text-[11px] space-y-1.5">
+              <span className="font-bold text-slate-300 block text-[10px] uppercase tracking-wider">
+                🎯 Contract Selection Hierarchy
+              </span>
+              <ol className="space-y-1 text-slate-400 text-[10px]">
+                <li className="flex items-start space-x-1.5">
+                  <span className="text-blue-400 font-bold">1.</span>
+                  <span><strong>Target ITM Prob (Primary):</strong> Closest match to {(targetDelta * 100).toFixed(0)}% ITM</span>
+                </li>
+                <li className="flex items-start space-x-1.5">
+                  <span className="text-emerald-400 font-bold">2.</span>
+                  <span><strong>DTE Window:</strong> Closest expiration to {targetDte}d ({minDte}–{maxDte}d range)</span>
+                </li>
+                <li className="flex items-start space-x-1.5">
+                  <span className="text-purple-400 font-bold">3.</span>
+                  <span><strong>Yield / ROC:</strong> Highest annualized ROC (&ge;{minAnnualizedRoc}%)</span>
+                </li>
+                <li className="flex items-start space-x-1.5">
+                  <span className="text-amber-400 font-bold">4.</span>
+                  <span><strong>Downside Cushion:</strong> Downside buffer &ge;{minDownsideBuffer}%</span>
+                </li>
+              </ol>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -378,20 +404,12 @@ export const BacktestStudioPage: React.FC = () => {
               </div>
             </div>
 
-            <div>
-              <div className="flex justify-between text-slate-400 mb-1">
-                <span>Profit Target (%)</span>
-                <span className="text-emerald-400 font-mono font-semibold">{profitTargetPct}%</span>
+            <div className="p-2.5 bg-emerald-950/30 border border-emerald-800/40 rounded-lg flex items-center justify-between">
+              <div>
+                <span className="text-[11px] font-bold text-emerald-400 block">Harvest Mode: Full Expiration Cycle</span>
+                <span className="text-[10px] text-slate-400">Holds to expiration/assignment to capture 100% of targeted Annualized ROC</span>
               </div>
-              <input
-                type="range"
-                min="30"
-                max="100"
-                step="5"
-                value={profitTargetPct}
-                onChange={e => setProfitTargetPct(parseInt(e.target.value))}
-                className="w-full accent-emerald-500"
-              />
+              <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" />
             </div>
 
             <div className="pt-2">
@@ -486,13 +504,20 @@ export const BacktestStudioPage: React.FC = () => {
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 font-mono text-slate-300">
                     {result.trades.map(trade => (
-                      <tr key={trade.id} className="hover:bg-slate-800/40 transition">
+                      <tr key={trade.id} className="hover:bg-slate-800/50 transition cursor-help" title={trade.notes || undefined}>
                         <td className="py-2.5 px-3 font-semibold text-slate-400">{trade.tradeNumber}</td>
                         <td className="py-2.5 px-3 text-[11px]">
                           {trade.entryDate} → {trade.exitDate} <span className="text-slate-500">({trade.holdDays}d)</span>
                         </td>
                         <td className="py-2.5 px-3">
                           <span className="font-bold text-blue-400">${trade.strike.toFixed(2)} Call</span>
+                          {trade.entryProbITM !== undefined && trade.entryProbITM > 0 ? (
+                            <span className="text-[10px] text-emerald-400 font-semibold block">
+                              {(trade.entryProbITM * 100).toFixed(0)}% ITM (Δ{trade.entryDelta?.toFixed(2)})
+                            </span>
+                          ) : trade.entryDelta !== undefined ? (
+                            <span className="text-[10px] text-slate-400 block">Δ{trade.entryDelta.toFixed(2)}</span>
+                          ) : null}
                         </td>
                         <td className="py-2.5 px-3">
                           <span className="font-bold text-purple-300 bg-purple-950/50 px-2 py-0.5 rounded border border-purple-800/50">

@@ -324,7 +324,10 @@ export const TimeTravelExplorerPage: React.FC = () => {
                         {(activeSideTab === 'both' || activeSideTab === 'calls') && (
                           <>
                             <td className={`py-2 px-2 ${isItmCall ? 'bg-blue-950/30 text-blue-300 font-semibold' : 'text-slate-400'}`}>
-                              {call?.delta ? call.delta.toFixed(2) : '-'}
+                              <div>{call?.delta ? call.delta.toFixed(2) : '-'}</div>
+                              {call?.probabilityOfITM !== undefined && (
+                                <span className="text-[10px] text-emerald-400 font-normal block">{(call.probabilityOfITM * 100).toFixed(0)}% ITM</span>
+                              )}
                             </td>
                             <td className="py-2 px-2 text-slate-400">
                               {call?.impliedVolatility ? `${(call.impliedVolatility * 100).toFixed(1)}%` : '-'}
@@ -353,7 +356,10 @@ export const TimeTravelExplorerPage: React.FC = () => {
                               {put?.impliedVolatility ? `${(put.impliedVolatility * 100).toFixed(1)}%` : '-'}
                             </td>
                             <td className={`py-2 px-2 ${isItmPut ? 'bg-purple-950/30 text-purple-300 font-semibold' : 'text-slate-400'}`}>
-                              {put?.delta ? put.delta.toFixed(2) : '-'}
+                              <div>{put?.delta ? put.delta.toFixed(2) : '-'}</div>
+                              {put?.probabilityOfITM !== undefined && (
+                                <span className="text-[10px] text-purple-400 font-normal block">{(put.probabilityOfITM * 100).toFixed(0)}% ITM</span>
+                              )}
                             </td>
                           </>
                         )}

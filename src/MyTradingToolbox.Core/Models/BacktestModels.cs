@@ -31,7 +31,7 @@ public class BacktestRequest
     public int TargetDte { get; set; } = 7;
     public int MinDte { get; set; } = 7;
     public int MaxDte { get; set; } = 13;
-    public decimal ProfitTargetPercent { get; set; } = 0.65m; // 65% of max profit
+    public decimal? ProfitTargetPercent { get; set; } // Optional early take-profit (held to expiration by default)
     public decimal? StopLossPercent { get; set; } // e.g. 2.0 (200% loss)
     public bool RollOnDeltaBreach { get; set; } = true;
     public decimal RollDeltaThreshold { get; set; } = 0.50m; // Roll if delta drops below 0.50 (loses ITM safety)
@@ -66,6 +66,7 @@ public class BacktestTrade
     public decimal Strike { get; set; }
     public DateOnly ExpirationDate { get; set; }
     public decimal EntryDelta { get; set; }
+    public decimal EntryProbITM { get; set; }
     public decimal OptionEntryPremium { get; set; }
     public decimal OptionExitPremium { get; set; }
     public decimal NetDebitPaid { get; set; }

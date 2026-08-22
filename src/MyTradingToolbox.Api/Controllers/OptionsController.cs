@@ -100,16 +100,23 @@ public class OptionsController : ControllerBase
                 var gamma = s.Gamma;
                 var theta = s.Theta;
                 var vega = s.Vega;
+                decimal? probItm = null;
 
-                if ((delta == null || delta == 0) && underlyingPrice > 0)
+                if (underlyingPrice > 0)
                 {
+                    var optPrice = s.Mid > 0 ? s.Mid : (s.Last > 0 ? s.Last : Math.Max(0.01m, underlyingPrice - s.Strike));
                     var greeks = MyTradingToolbox.Core.Calculators.BlackScholesCalculator.ComputeGreeks(
-                        underlyingPrice, s.Strike, s.DTE, s.Side, s.Mid > 0 ? s.Mid : s.Last);
-                    delta = greeks.Delta;
-                    gamma = greeks.Gamma;
-                    theta = greeks.Theta;
-                    vega = greeks.Vega;
-                    iv = greeks.IV;
+                        underlyingPrice, s.Strike, s.DTE, s.Side, optPrice);
+                    probItm = greeks.ProbabilityOfITM;
+
+                    if (delta == null || delta == 0)
+                    {
+                        delta = greeks.Delta;
+                        gamma = greeks.Gamma;
+                        theta = greeks.Theta;
+                        vega = greeks.Vega;
+                        iv = greeks.IV;
+                    }
                 }
 
                 return new OptionContractDto
@@ -129,6 +136,7 @@ public class OptionsController : ControllerBase
                     Vega = vega,
                     Rho = s.Rho,
                     ImpliedVolatility = iv,
+                    ProbabilityOfITM = probItm,
                     Volume = s.Volume,
                     OpenInterest = s.OpenInterest,
                     DataSource = s.DataSource
@@ -145,16 +153,23 @@ public class OptionsController : ControllerBase
                 var gamma = s.Gamma;
                 var theta = s.Theta;
                 var vega = s.Vega;
+                decimal? probItm = null;
 
-                if ((delta == null || delta == 0) && underlyingPrice > 0)
+                if (underlyingPrice > 0)
                 {
+                    var optPrice = s.Mid > 0 ? s.Mid : (s.Last > 0 ? s.Last : Math.Max(0.01m, s.Strike - underlyingPrice));
                     var greeks = MyTradingToolbox.Core.Calculators.BlackScholesCalculator.ComputeGreeks(
-                        underlyingPrice, s.Strike, s.DTE, s.Side, s.Mid > 0 ? s.Mid : s.Last);
-                    delta = greeks.Delta;
-                    gamma = greeks.Gamma;
-                    theta = greeks.Theta;
-                    vega = greeks.Vega;
-                    iv = greeks.IV;
+                        underlyingPrice, s.Strike, s.DTE, s.Side, optPrice);
+                    probItm = greeks.ProbabilityOfITM;
+
+                    if (delta == null || delta == 0)
+                    {
+                        delta = greeks.Delta;
+                        gamma = greeks.Gamma;
+                        theta = greeks.Theta;
+                        vega = greeks.Vega;
+                        iv = greeks.IV;
+                    }
                 }
 
                 return new OptionContractDto
@@ -174,6 +189,7 @@ public class OptionsController : ControllerBase
                     Vega = vega,
                     Rho = s.Rho,
                     ImpliedVolatility = iv,
+                    ProbabilityOfITM = probItm,
                     Volume = s.Volume,
                     OpenInterest = s.OpenInterest,
                     DataSource = s.DataSource

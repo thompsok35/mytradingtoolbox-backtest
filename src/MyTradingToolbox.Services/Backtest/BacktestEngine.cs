@@ -101,22 +101,14 @@ public class BacktestEngine : IBacktestEngine
                 decimal exitStockPrice = spotPrice;
                 decimal exitOptionPrice = currentOptionPrice;
 
-                // Profit Target Check: Check if option has decayed sufficiently
-                var maxOptionProfit = currentPosition.OptionEntryPremium;
-                var currentOptionGain = currentPosition.OptionEntryPremium - currentOptionPrice;
-                if (maxOptionProfit > 0 && (currentOptionGain / maxOptionProfit) >= request.ProfitTargetPercent)
-                {
-                    shouldExit = true;
-                    exitReason = ExitReason.ProfitTargetHit;
-                }
-                // Expiration / Near-expiration check
-                else if (currentDte <= request.CloseDteThreshold || date >= currentPosition.ExpirationDate)
+                // 1. Expiration / Near-expiration check (Primary harvest of Annualized ROC upon Assignment)
+                if (currentDte <= request.CloseDteThreshold || date >= currentPosition.ExpirationDate)
                 {
                     shouldExit = true;
                     if (spotPrice >= currentPosition.Strike)
                     {
                         exitReason = ExitReason.Assignment;
-                        exitStockPrice = currentPosition.Strike; // Shares called away at strike price
+                        exitStockPrice = currentPosition.Strike; // Shares called away at strike price, capturing full annualized return
                         exitOptionPrice = 0m; // Expired ITM, assigned
                     }
                     else
@@ -125,13 +117,13 @@ public class BacktestEngine : IBacktestEngine
                         exitOptionPrice = 0m; // Expired worthless OTM
                     }
                 }
-                // Delta Breach Roll check
+                // 2. Defensive Delta Breach Roll check (if stock price breaches downward past safety threshold)
                 else if (request.RollOnDeltaBreach && Math.Abs(currentDelta) < request.RollDeltaThreshold)
                 {
                     shouldExit = true;
                     exitReason = ExitReason.DeltaBreachRoll;
                 }
-                // Stop Loss check
+                // 3. Stop Loss check
                 else if (request.StopLossPercent.HasValue)
                 {
                     var unrealizedLoss = (currentPosition.StockEntryPrice - spotPrice) - (currentPosition.OptionEntryPremium - currentOptionPrice);
@@ -139,6 +131,17 @@ public class BacktestEngine : IBacktestEngine
                     {
                         shouldExit = true;
                         exitReason = ExitReason.StopLossHit;
+                    }
+                }
+                // 4. Optional early profit target check (only if explicitly set)
+                else if (request.ProfitTargetPercent.HasValue && request.ProfitTargetPercent.Value > 0)
+                {
+                    var maxOptionProfit = currentPosition.OptionEntryPremium;
+                    var currentOptionGain = currentPosition.OptionEntryPremium - currentOptionPrice;
+                    if (maxOptionProfit > 0 && (currentOptionGain / maxOptionProfit) >= request.ProfitTargetPercent.Value)
+                    {
+                        shouldExit = true;
+                        exitReason = ExitReason.ProfitTargetHit;
                     }
                 }
 
@@ -183,6 +186,7 @@ public class BacktestEngine : IBacktestEngine
                         Strike = currentPosition.Strike,
                         ExpirationDate = currentPosition.ExpirationDate,
                         EntryDelta = currentPosition.EntryDelta,
+                        EntryProbITM = currentPosition.EntryProbITM,
                         OptionEntryPremium = currentPosition.OptionEntryPremium,
                         OptionExitPremium = exitOptionPrice,
                         NetDebitPaid = currentPosition.NetDebitPaid,
@@ -192,7 +196,7 @@ public class BacktestEngine : IBacktestEngine
                         ReturnOnCapitalPercent = Math.Round(returnPct, 2),
                         HoldDays = holdDays,
                         ExitReason = exitReason,
-                        Notes = $"Closed via {exitReason} after {holdDays} days. Strike: ${currentPosition.Strike:F2}, Exit spot: ${exitStockPrice:F2}"
+                        Notes = $"Selected {(currentPosition.EntryProbITM * 100):F0}% ITM (Δ{currentPosition.EntryDelta:F2}) vs Target {(request.TargetDelta * 100):F0}%. Closed via {exitReason} after {holdDays}d. Strike: ${currentPosition.Strike:F2}, Exit spot: ${exitStockPrice:F2}."
                     });
 
                     currentPosition = null;
@@ -214,71 +218,58 @@ public class BacktestEngine : IBacktestEngine
 
                 if (chain.Count > 0)
                 {
-                    // Compute Greeks dynamically if not pre-stored
-                    foreach (var c in chain)
-                    {
-                        if ((c.Delta == null || c.Delta == 0) && spotPrice > 0)
-                        {
-                            var greeks = Core.Calculators.BlackScholesCalculator.ComputeGreeks(
-                                spotPrice, c.Strike, c.DTE, c.Side, c.Mid > 0 ? c.Mid : c.Last);
-                            c.Delta = greeks.Delta;
-                            c.ImpliedVolatility = greeks.IV;
-                        }
-                    }
-
-                    // Filter candidate options using strategy risk rules
-                    var candidates = chain
+                    // Compute Greeks and ITM Probability dynamically
+                    var computedChain = chain
                         .Where(c => c.Strike <= spotPrice)
-                        .Select(c => {
+                        .Select(c =>
+                        {
+                            var optPrice = c.Mid > 0 ? c.Mid : (c.Last > 0 ? c.Last : Math.Max(0.01m, spotPrice - c.Strike));
+                            var greeks = Core.Calculators.BlackScholesCalculator.ComputeGreeks(
+                                spotPrice, c.Strike, c.DTE, c.Side, optPrice);
+
                             var premium = c.Bid > 0 ? c.Bid : c.Mid;
                             var debit = spotPrice - premium + request.SlippagePerContract;
                             var downsideBuffer = spotPrice > 0 ? (premium / spotPrice) * 100m : 0m;
                             var assignmentProfit = c.Strike - debit;
                             var dte = Math.Max(1, c.DTE);
                             var annualizedRoc = debit > 0 ? (assignmentProfit / debit) * (365m / dte) * 100m : -999m;
-                            var delta = c.Delta ?? 0.85m;
-                            return new {
+
+                            c.Delta = greeks.Delta;
+                            c.ImpliedVolatility = greeks.IV;
+
+                            return new
+                            {
                                 Contract = c,
                                 Premium = premium,
                                 NetDebit = debit,
                                 DownsideBuffer = downsideBuffer,
                                 AssignmentProfit = assignmentProfit,
                                 AnnualizedRoc = annualizedRoc,
-                                Delta = delta
+                                Delta = greeks.Delta,
+                                ProbITM = greeks.ProbabilityOfITM
                             };
                         })
-                        .Where(x => x.AssignmentProfit > 0 
-                                 && x.DownsideBuffer >= request.MinDownsideBufferPercent
-                                 && x.AnnualizedRoc >= request.MinAnnualizedRocPercent
-                                 && x.Delta >= (request.TargetDelta - request.DeltaTolerance))
-                        .OrderBy(x => Math.Abs(x.Contract.DTE - request.TargetDte))
-                        .ThenByDescending(x => x.AnnualizedRoc)
                         .ToList();
 
-                    // Fallback to highest Annualized ROC ITM if strictly within delta range has no match
-                    var selected = candidates.FirstOrDefault() 
-                        ?? chain
-                            .Where(c => c.Strike <= spotPrice)
-                            .Select(c => {
-                                var premium = c.Bid > 0 ? c.Bid : c.Mid;
-                                var debit = spotPrice - premium + request.SlippagePerContract;
-                                var downsideBuffer = spotPrice > 0 ? (premium / spotPrice) * 100m : 0m;
-                                var assignmentProfit = c.Strike - debit;
-                                var dte = Math.Max(1, c.DTE);
-                                var annualizedRoc = debit > 0 ? (assignmentProfit / debit) * (365m / dte) * 100m : -999m;
-                                return new {
-                                    Contract = c,
-                                    Premium = premium,
-                                    NetDebit = debit,
-                                    DownsideBuffer = downsideBuffer,
-                                    AssignmentProfit = assignmentProfit,
-                                    AnnualizedRoc = annualizedRoc,
-                                    Delta = c.Delta ?? 0.85m
-                                };
-                            })
-                            .Where(x => x.AssignmentProfit > 0 && x.DownsideBuffer >= request.MinDownsideBufferPercent)
-                            .OrderByDescending(x => x.AnnualizedRoc)
-                            .FirstOrDefault();
+                    // Filter candidate options using strategy risk rules and target ITM probability
+                    // PRIORITY 1 (Highest): Closest to Target ITM Probability (Math.Abs(ProbITM - TargetDelta))
+                    // PRIORITY 2: Closest to Target DTE (Math.Abs(DTE - TargetDte))
+                    // PRIORITY 3: Highest Annualized ROC (ThenByDescending(AnnualizedRoc))
+                    // PRIORITY 4: Maximum Downside Cushion Buffer
+                    var candidates = computedChain
+                        .Where(x => x.AssignmentProfit > 0
+                                 && x.DownsideBuffer >= request.MinDownsideBufferPercent
+                                 && x.AnnualizedRoc >= request.MinAnnualizedRocPercent
+                                 && Math.Abs(x.ProbITM - request.TargetDelta) <= request.DeltaTolerance)
+                        .OrderBy(x => Math.Abs(x.ProbITM - request.TargetDelta))
+                        .ThenBy(x => Math.Abs(x.Contract.DTE - request.TargetDte))
+                        .ThenByDescending(x => x.AnnualizedRoc)
+                        .ThenByDescending(x => x.DownsideBuffer)
+                        .ToList();
+
+                    // Only select a contract that meets the strategy criteria.
+                    // If no contract satisfies the ITM probability and ROC requirements, stay in cash.
+                    var selected = candidates.FirstOrDefault();
 
                     if (selected != null)
                     {
@@ -329,7 +320,8 @@ public class BacktestEngine : IBacktestEngine
                                 OptionSymbol = candidate.OptionSymbol,
                                 Strike = candidate.Strike,
                                 ExpirationDate = candidate.ExpirationDate,
-                                EntryDelta = candidate.Delta ?? request.TargetDelta,
+                                EntryDelta = candidate.Delta ?? selected.Delta,
+                                EntryProbITM = selected.ProbITM,
                                 OptionEntryPremium = callPremium,
                                 NetDebitPaid = netDebitPerShare,
                                 TotalCost = totalCost,
@@ -407,6 +399,7 @@ public class BacktestEngine : IBacktestEngine
                 Strike = currentPosition.Strike,
                 ExpirationDate = currentPosition.ExpirationDate,
                 EntryDelta = currentPosition.EntryDelta,
+                EntryProbITM = currentPosition.EntryProbITM,
                 OptionEntryPremium = currentPosition.OptionEntryPremium,
                 OptionExitPremium = optPrice,
                 NetDebitPaid = currentPosition.NetDebitPaid,
@@ -416,7 +409,7 @@ public class BacktestEngine : IBacktestEngine
                 ReturnOnCapitalPercent = Math.Round((tradePnl / currentPosition.TotalCost) * 100m, 2),
                 HoldDays = holdDays,
                 ExitReason = ExitReason.ManualClose,
-                Notes = "Closed at conclusion of backtest period."
+                Notes = $"Selected {(currentPosition.EntryProbITM * 100):F0}% ITM (Δ{currentPosition.EntryDelta:F2}) vs Target {(request.TargetDelta * 100):F0}%. Closed at conclusion of backtest period."
             });
         }
 
@@ -522,6 +515,7 @@ public class BacktestEngine : IBacktestEngine
         public decimal Strike { get; set; }
         public DateOnly ExpirationDate { get; set; }
         public decimal EntryDelta { get; set; }
+        public decimal EntryProbITM { get; set; }
         public decimal OptionEntryPremium { get; set; }
         public decimal NetDebitPaid { get; set; }
         public decimal TotalCost { get; set; }

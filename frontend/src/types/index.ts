@@ -38,6 +38,7 @@ export interface OptionContractDto {
   vega?: number;
   rho?: number;
   impliedVolatility?: number;
+  probabilityOfITM?: number;
   underlyingPrice?: number;
   volume: number;
   openInterest: number;
@@ -159,7 +160,7 @@ export interface BacktestRequest {
   targetDte: number;
   minDte: number;
   maxDte: number;
-  profitTargetPercent: number;
+  profitTargetPercent?: number;
   stopLossPercent?: number;
   rollOnDeltaBreach: boolean;
   rollDeltaThreshold: number;
@@ -180,6 +181,7 @@ export interface BacktestTrade {
   strike: number;
   expirationDate?: string;
   entryDelta?: number;
+  entryProbITM?: number;
   contracts: number;
   stockEntryPrice: number;
   optionEntryPrice: number;

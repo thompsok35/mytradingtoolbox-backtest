@@ -6,7 +6,7 @@ public static class BlackScholesCalculator
 {
     private const double RiskFreeRate = 0.045; // 4.5% baseline treasury rate
 
-    public static (decimal Delta, decimal Gamma, decimal Theta, decimal Vega, decimal IV) ComputeGreeks(
+    public static (decimal Delta, decimal Gamma, decimal Theta, decimal Vega, decimal IV, decimal ProbabilityOfITM) ComputeGreeks(
         decimal spotPrice,
         decimal strikePrice,
         int dte,
@@ -15,7 +15,9 @@ public static class BlackScholesCalculator
     {
         if (spotPrice <= 0 || strikePrice <= 0 || optionMarketPrice <= 0)
         {
-            return (side == OptionSide.Call ? (spotPrice > strikePrice ? 1.0m : 0.0m) : (spotPrice < strikePrice ? -1.0m : 0.0m), 0m, 0m, 0m, 0m);
+            decimal defDelta = side == OptionSide.Call ? (spotPrice > strikePrice ? 1.0m : 0.0m) : (spotPrice < strikePrice ? -1.0m : 0.0m);
+            decimal defProb = side == OptionSide.Call ? (spotPrice > strikePrice ? 1.0m : 0.0m) : (spotPrice < strikePrice ? 1.0m : 0.0m);
+            return (defDelta, 0m, 0m, 0m, 0m, defProb);
         }
 
         double s = (double)spotPrice;
@@ -27,11 +29,14 @@ public static class BlackScholesCalculator
         double iv = CalculateImpliedVolatility(s, k, t, RiskFreeRate, p, isCall);
         if (iv <= 0.001)
         {
-            // Fallback intrinsic delta if IV cannot be solved
+            // Fallback intrinsic delta and ITM probability if IV cannot be solved
             decimal fallbackDelta = isCall
                 ? (s >= k ? 0.70m : 0.30m)
                 : (s <= k ? -0.70m : -0.30m);
-            return (fallbackDelta, 0m, 0m, 0m, 0.30m);
+            decimal fallbackProb = isCall
+                ? (s >= k ? 0.65m : 0.25m)
+                : (s <= k ? 0.65m : 0.25m);
+            return (fallbackDelta, 0m, 0m, 0m, 0.30m, fallbackProb);
         }
 
         double d1 = (Math.Log(s / k) + (RiskFreeRate + 0.5 * iv * iv) * t) / (iv * Math.Sqrt(t));
@@ -45,12 +50,16 @@ public static class BlackScholesCalculator
         double thetaPut = (-s * NormalPdf(d1) * iv / (2.0 * Math.Sqrt(t)) + RiskFreeRate * k * Math.Exp(-RiskFreeRate * t) * NormalCdf(-d2)) / 365.0;
         double theta = isCall ? thetaCall : thetaPut;
 
+        // Risk-neutral probability of expiring In-The-Money: N(d2) for Calls, N(-d2) for Puts
+        double probItm = isCall ? Math.Clamp(NormalCdf(d2), 0.0, 1.0) : Math.Clamp(NormalCdf(-d2), 0.0, 1.0);
+
         return (
             Delta: Math.Round((decimal)delta, 4),
             Gamma: Math.Round((decimal)gamma, 4),
             Theta: Math.Round((decimal)theta, 4),
             Vega: Math.Round((decimal)vega, 4),
-            IV: Math.Round((decimal)iv, 4)
+            IV: Math.Round((decimal)iv, 4),
+            ProbabilityOfITM: Math.Round((decimal)probItm, 4)
         );
     }
 

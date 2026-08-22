@@ -1,4 +1,4 @@
-﻿using MyTradingToolbox.Core.Enums;
+using MyTradingToolbox.Core.Enums;
 
 namespace MyTradingToolbox.Core.Models;
 
@@ -28,6 +28,7 @@ public class OptionContractDto
     public decimal? Vega { get; set; }
     public decimal? Rho { get; set; }
     public decimal? ImpliedVolatility { get; set; }
+    public decimal? ProbabilityOfITM { get; set; }
     public long Volume { get; set; }
     public long OpenInterest { get; set; }
     public DataSource DataSource { get; set; }
