@@ -204,8 +204,8 @@ public class BacktestEngine : IBacktestEngine
                             Symbol = symbol,
                             Date = date,
                             Side = OptionSide.Call,
-                            MinDte = 3,
-                            MaxDte = 8
+                            MinDte = request.MinDte > 0 ? request.MinDte : 3,
+                            MaxDte = request.MaxDte > 0 ? request.MaxDte : 45
                         }, ct);
 
                         if (chain.Count > 0)
@@ -248,7 +248,7 @@ public class BacktestEngine : IBacktestEngine
                                          && x.AnnualizedRoc >= request.MinAnnualizedRocPercent
                                          && Math.Abs(x.ProbITM - request.TargetDelta) <= request.DeltaTolerance)
                                 .OrderBy(x => Math.Abs(x.ProbITM - request.TargetDelta))
-                                .ThenBy(x => Math.Abs(x.Contract.DTE - 4))
+                                .ThenBy(x => Math.Abs(x.Contract.DTE - request.TargetDte))
                                 .ThenByDescending(x => x.AnnualizedRoc)
                                 .ThenByDescending(x => x.DownsideBuffer)
                                 .ToList();
@@ -329,8 +329,8 @@ public class BacktestEngine : IBacktestEngine
                             Symbol = symbol,
                             Date = date,
                             Side = OptionSide.Call,
-                            MinDte = 3,
-                            MaxDte = 8
+                            MinDte = request.MinDte > 0 ? request.MinDte : 3,
+                            MaxDte = request.MaxDte > 0 ? request.MaxDte : 45
                         }, ct);
 
                         bool soldCall = false;
@@ -361,7 +361,7 @@ public class BacktestEngine : IBacktestEngine
                                 })
                                 .Where(x => x.Premium > 0)
                                 .OrderBy(x => Math.Abs(x.ProbITM - request.TargetDelta))
-                                .ThenBy(x => Math.Abs(x.Contract.DTE - 4))
+                                .ThenBy(x => Math.Abs(x.Contract.DTE - request.TargetDte))
                                 .ThenByDescending(x => x.AnnualizedRoc)
                                 .ToList();
 
