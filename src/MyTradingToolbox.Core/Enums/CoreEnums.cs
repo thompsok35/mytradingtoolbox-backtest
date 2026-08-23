@@ -60,13 +60,15 @@ public enum ExitReason
     Assignment,
     DeltaBreachRoll,
     DteThresholdExit,
-    ManualClose
+    ManualClose,
+    NoTradeOpportunity
 }
 
 public enum BacktestTradeType
 {
     BuyWrite,
     CoveredCallRoll,
-    CoveredCallNextCycle
+    CoveredCallNextCycle,
+    NoTradeOpportunity
 }
 

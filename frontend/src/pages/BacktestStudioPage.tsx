@@ -316,29 +316,29 @@ export const BacktestStudioPage: React.FC = () => {
               </p>
             </div>
 
-            {/* Selection Hierarchy Box */}
+            {/* Weekly Cycle Lifecycle Box */}
             <div className="p-2.5 bg-slate-950/70 border border-slate-800/80 rounded-lg text-[11px] space-y-1.5">
-              <span className="font-bold text-slate-300 block text-[10px] uppercase tracking-wider">
-                🎯 Contract Selection Hierarchy
+              <span className="font-bold text-blue-400 block text-[10px] uppercase tracking-wider">
+                📅 Weekly Cycle Lifecycle (Held to Expiration)
               </span>
-              <ol className="space-y-1 text-slate-400 text-[10px]">
+              <ul className="space-y-1 text-slate-400 text-[10px]">
                 <li className="flex items-start space-x-1.5">
-                  <span className="text-blue-400 font-bold">1.</span>
-                  <span><strong>Target ITM Prob (Primary):</strong> Closest match to {(targetDelta * 100).toFixed(0)}% ITM</span>
+                  <span className="text-blue-400 font-bold">•</span>
+                  <span><strong>Monday Entry:</strong> Buy-Write or sell weekly call (&ge; cost basis). Always held to Friday expiration.</span>
                 </li>
                 <li className="flex items-start space-x-1.5">
-                  <span className="text-emerald-400 font-bold">2.</span>
-                  <span><strong>DTE Window:</strong> Closest expiration to {targetDte}d ({minDte}–{maxDte}d range)</span>
+                  <span className="text-emerald-400 font-bold">•</span>
+                  <span><strong>Friday Assigned (Close &ge; Strike):</strong> Shares called away at strike price. Full targeted profit realized.</span>
                 </li>
                 <li className="flex items-start space-x-1.5">
-                  <span className="text-purple-400 font-bold">3.</span>
-                  <span><strong>Yield / ROC:</strong> Highest annualized ROC (&ge;{minAnnualizedRoc}%)</span>
+                  <span className="text-purple-400 font-bold">•</span>
+                  <span><strong>Friday Unassigned (Close &lt; Strike):</strong> 100% option premium kept. Shares retained at reduced cost basis.</span>
                 </li>
                 <li className="flex items-start space-x-1.5">
-                  <span className="text-amber-400 font-bold">4.</span>
-                  <span><strong>Downside Cushion:</strong> Downside buffer &ge;{minDownsideBuffer}%</span>
+                  <span className="text-amber-400 font-bold">•</span>
+                  <span><strong>No Trade Opportunity:</strong> If stock is below basis, shares are held unhedged to prevent locking in a loss.</span>
                 </li>
-              </ol>
+              </ul>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
@@ -511,11 +511,13 @@ export const BacktestStudioPage: React.FC = () => {
                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
                             trade.tradeType === 'BuyWrite' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
                             trade.tradeType === 'CoveredCallNextCycle' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' :
+                            trade.tradeType === 'NoTradeOpportunity' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
                             trade.tradeType === 'CoveredCallRoll' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
                             'bg-slate-800 text-slate-400'
                           }`}>
                             {trade.tradeType === 'BuyWrite' ? 'Buy-Write' :
                              trade.tradeType === 'CoveredCallNextCycle' ? 'Covered Call' :
+                             trade.tradeType === 'NoTradeOpportunity' ? 'No Trade' :
                              trade.tradeType === 'CoveredCallRoll' ? 'Call Roll' : 'Cycle'}
                           </span>
                         </td>
@@ -523,14 +525,20 @@ export const BacktestStudioPage: React.FC = () => {
                           {trade.entryDate} → {trade.exitDate} <span className="text-slate-500">({trade.holdDays}d)</span>
                         </td>
                         <td className="py-2.5 px-3">
-                          <span className="font-bold text-blue-400">${trade.strike.toFixed(2)} Call</span>
-                          {trade.entryProbITM !== undefined && trade.entryProbITM > 0 ? (
-                            <span className="text-[10px] text-emerald-400 font-semibold block">
-                              {(trade.entryProbITM * 100).toFixed(0)}% ITM (Δ{trade.entryDelta?.toFixed(2)})
-                            </span>
-                          ) : trade.entryDelta !== undefined ? (
-                            <span className="text-[10px] text-slate-400 block">Δ{trade.entryDelta.toFixed(2)}</span>
-                          ) : null}
+                          {trade.tradeType === 'NoTradeOpportunity' ? (
+                            <span className="text-[11px] text-amber-300 italic block">Stock &lt; Cost Basis</span>
+                          ) : (
+                            <>
+                              <span className="font-bold text-blue-400">${trade.strike.toFixed(2)} Call</span>
+                              {trade.entryProbITM !== undefined && trade.entryProbITM > 0 ? (
+                                <span className="text-[10px] text-emerald-400 font-semibold block">
+                                  {(trade.entryProbITM * 100).toFixed(0)}% ITM (Δ{trade.entryDelta?.toFixed(2)})
+                                </span>
+                              ) : trade.entryDelta !== undefined ? (
+                                <span className="text-[10px] text-slate-400 block">Δ{trade.entryDelta.toFixed(2)}</span>
+                              ) : null}
+                            </>
+                          )}
                         </td>
                         <td className="py-2.5 px-3">
                           <span className="font-bold text-purple-300 bg-purple-950/50 px-2 py-0.5 rounded border border-purple-800/50">
@@ -554,10 +562,14 @@ export const BacktestStudioPage: React.FC = () => {
                             trade.exitReason === 'ProfitTargetHit' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
                             trade.exitReason === 'Assignment' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
                             trade.exitReason === 'Expiration' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
+                            trade.exitReason === 'NoTradeOpportunity' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
                             trade.exitReason === 'DeltaBreachRoll' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
                             'bg-slate-800 text-slate-400'
                           }`}>
-                            {trade.exitReason === 'Expiration' ? 'Unassigned (100% Prem Kept)' : trade.exitReason}
+                            {trade.exitReason === 'Expiration' ? 'Unassigned (100% Prem Kept)' :
+                             trade.exitReason === 'Assignment' ? 'Assigned (Friday Close >= Strike)' :
+                             trade.exitReason === 'NoTradeOpportunity' ? 'No Trade Opportunity (Held)' :
+                             trade.exitReason}
                           </span>
                         </td>
                       </tr>

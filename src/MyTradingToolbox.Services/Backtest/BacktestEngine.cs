@@ -70,6 +70,7 @@ public class BacktestEngine : IBacktestEngine
         decimal currentCostBasisPerShare = 0m;
         decimal originalStockEntryPrice = 0m;
         ActivePosition? currentPosition = null;
+        DateOnly? lastNoTradeLoggedDate = null;
         var trades = new List<BacktestTrade>();
         var equityCurve = new List<EquityPoint>();
         decimal peakEquity = request.InitialCapital;
@@ -80,74 +81,11 @@ public class BacktestEngine : IBacktestEngine
             var date = candle.Date;
             var spotPrice = candle.Close;
 
-            // 1. Manage existing active short call position
+            // 1. Manage active short call position — POSITIONS ARE ALWAYS HELD TO FRIDAY EXPIRATION
             if (currentPosition != null)
             {
-                decimal currentOptionPrice;
-                decimal currentDelta;
-                if (currentPosition.CachedQuotes.TryGetValue(date, out var cachedQ))
-                {
-                    currentOptionPrice = cachedQ.Mid;
-                    currentDelta = cachedQ.Delta;
-                }
-                else
-                {
-                    currentOptionPrice = Math.Max(0.01m, spotPrice - currentPosition.Strike);
-                    currentDelta = 0.50m;
-                }
-
-                var currentDte = (currentPosition.ExpirationDate.ToDateTime(TimeOnly.MinValue) - date.ToDateTime(TimeOnly.MinValue)).Days;
-
-                bool shouldExit = false;
-                ExitReason exitReason = ExitReason.ManualClose;
-                decimal exitStockPrice = spotPrice;
-                decimal exitOptionPrice = currentOptionPrice;
-
-                // 1. Expiration / Near-expiration check (Primary harvest of Annualized ROC upon Assignment)
-                if (currentDte <= request.CloseDteThreshold || date >= currentPosition.ExpirationDate)
-                {
-                    shouldExit = true;
-                    if (spotPrice >= currentPosition.Strike)
-                    {
-                        exitReason = ExitReason.Assignment;
-                        exitStockPrice = currentPosition.Strike; // Shares called away at strike price
-                        exitOptionPrice = 0m;
-                    }
-                    else
-                    {
-                        exitReason = ExitReason.Expiration;
-                        exitOptionPrice = 0m; // Expired worthless OTM, kept full option premium
-                    }
-                }
-                // 2. Defensive Delta Breach Roll check (if stock price breaches downward past safety threshold)
-                else if (request.RollOnDeltaBreach && Math.Abs(currentDelta) < request.RollDeltaThreshold)
-                {
-                    shouldExit = true;
-                    exitReason = ExitReason.DeltaBreachRoll;
-                }
-                // 3. Stop Loss check
-                else if (request.StopLossPercent.HasValue)
-                {
-                    var unrealizedLoss = (currentPosition.StockEntryPrice - spotPrice) - (currentPosition.OptionEntryPremium - currentOptionPrice);
-                    if (unrealizedLoss >= (currentCostBasisPerShare * request.StopLossPercent.Value))
-                    {
-                        shouldExit = true;
-                        exitReason = ExitReason.StopLossHit;
-                    }
-                }
-                // 4. Optional early profit target check (only if explicitly set)
-                else if (request.ProfitTargetPercent.HasValue && request.ProfitTargetPercent.Value > 0)
-                {
-                    var maxOptionProfit = currentPosition.OptionEntryPremium;
-                    var currentOptionGain = currentPosition.OptionEntryPremium - currentOptionPrice;
-                    if (maxOptionProfit > 0 && (currentOptionGain / maxOptionProfit) >= request.ProfitTargetPercent.Value)
-                    {
-                        shouldExit = true;
-                        exitReason = ExitReason.ProfitTargetHit;
-                    }
-                }
-
-                if (shouldExit)
+                // Position is strictly evaluated at Friday expiration close
+                if (date >= currentPosition.ExpirationDate)
                 {
                     tradeCounter++;
                     var holdDays = (date.ToDateTime(TimeOnly.MinValue) - currentPosition.EntryDate.ToDateTime(TimeOnly.MinValue)).Days;
@@ -157,10 +95,10 @@ public class BacktestEngine : IBacktestEngine
                     decimal returnPct;
                     decimal proceeds;
 
-                    if (exitReason == ExitReason.Assignment)
+                    if (spotPrice >= currentPosition.Strike)
                     {
-                        // Shares called away at strike price
-                        // Charan's Rule #2: Max Profit = (Strike - Net Cost Basis)
+                        // CASE A: ASSIGNED (Friday Close >= Strike)
+                        // Shares called away at strike price, capturing full profit from adjusted cost basis
                         proceeds = (currentPosition.Strike * ownedShares) - (request.CommissionPerContract * currentPosition.Contracts);
                         var totalCost = currentCostBasisPerShare * ownedShares;
                         tradePnl = proceeds - totalCost;
@@ -177,7 +115,7 @@ public class BacktestEngine : IBacktestEngine
                             ExitDate = date,
                             Contracts = currentPosition.Contracts,
                             StockEntryPrice = currentPosition.StockEntryPrice,
-                            StockExitPrice = exitStockPrice,
+                            StockExitPrice = currentPosition.Strike,
                             OptionSymbol = currentPosition.OptionSymbol,
                             Strike = currentPosition.Strike,
                             ExpirationDate = currentPosition.ExpirationDate,
@@ -188,23 +126,24 @@ public class BacktestEngine : IBacktestEngine
                             NetDebitPaid = currentCostBasisPerShare,
                             AdjustedCostBasisPerShare = Math.Round(currentCostBasisPerShare, 2),
                             TotalDebitOutlay = Math.Round(totalCost, 2),
-                            NetCreditReceived = proceeds / (currentPosition.Contracts * 100m),
+                            NetCreditReceived = proceeds / ownedShares,
                             RealizedPnlDollars = Math.Round(tradePnl, 2),
                             ReturnOnCapitalPercent = Math.Round(returnPct, 2),
                             HoldDays = holdDays,
-                            ExitReason = exitReason,
-                            Notes = $"Assigned at strike ${currentPosition.Strike:F2}. Cost basis was ${currentCostBasisPerShare:F2}. Captured {(tradePnl >= 0 ? "+" : "")}${tradePnl:F2} profit."
+                            ExitReason = ExitReason.Assignment,
+                            Notes = $"Assigned at strike ${currentPosition.Strike:F2} (Friday Close: ${spotPrice:F2}). Cost basis was ${currentCostBasisPerShare:F2}. Realized {(tradePnl >= 0 ? "+" : "")}${tradePnl:F2} profit."
                         });
 
-                        // Position resolved, shares delivered
+                        // Position resolved, shares delivered, cash restored
                         ownedShares = 0;
                         currentCostBasisPerShare = 0m;
                         originalStockEntryPrice = 0m;
                         currentPosition = null;
                     }
-                    else if (exitReason == ExitReason.Expiration)
+                    else
                     {
-                        // Call expired worthless OTM. Trader retains 100% of the option premium collected!
+                        // CASE B: UNASSIGNED (Friday Close < Strike)
+                        // Short call expired worthless OTM at $0.00. Trader keeps 100% of option premium!
                         // Shares are NOT sold. Cost basis was already reduced upon entry.
                         var optionGain = (currentPosition.OptionEntryPremium * ownedShares) - (request.CommissionPerContract * currentPosition.Contracts);
                         tradePnl = optionGain;
@@ -235,206 +174,203 @@ public class BacktestEngine : IBacktestEngine
                             RealizedPnlDollars = Math.Round(tradePnl, 2),
                             ReturnOnCapitalPercent = Math.Round(returnPct, 2),
                             HoldDays = holdDays,
-                            ExitReason = exitReason,
-                            Notes = $"Unassigned. Kept 100% option premium (${currentPosition.OptionEntryPremium:F2}/sh). Shares retained at adjusted cost basis ${currentCostBasisPerShare:F2}."
+                            ExitReason = ExitReason.Expiration,
+                            Notes = $"Unassigned at Friday expiration (Close: ${spotPrice:F2} < Strike ${currentPosition.Strike:F2}). Kept 100% premium (${currentPosition.OptionEntryPremium:F2}/sh). Shares retained at basis ${currentCostBasisPerShare:F2}."
                         });
 
-                        // Keep shares, ready to sell next cycle call
-                        currentPosition = null;
-                    }
-                    else if (exitReason == ExitReason.DeltaBreachRoll)
-                    {
-                        // Buy to close the short call to defend position, keeping shares
-                        // Charan's Rule #5: Buy back old call, cost basis increases by buyback price
-                        var buybackCost = (exitOptionPrice * ownedShares) + (request.CommissionPerContract * currentPosition.Contracts) + (request.SlippagePerContract * ownedShares);
-                        currentCash -= buybackCost;
-                        currentCostBasisPerShare += (buybackCost / ownedShares);
-
-                        var optionPnl = ((currentPosition.OptionEntryPremium - exitOptionPrice) * ownedShares) - (request.CommissionPerContract * 2 * currentPosition.Contracts);
-                        tradePnl = optionPnl;
-                        var totalCost = currentCostBasisPerShare * ownedShares;
-                        returnPct = totalCost > 0 ? (tradePnl / totalCost) * 100m : 0m;
-
-                        trades.Add(new BacktestTrade
-                        {
-                            Id = Guid.NewGuid(),
-                            TradeNumber = tradeCounter,
-                            TradeType = BacktestTradeType.CoveredCallRoll,
-                            EntryDate = currentPosition.EntryDate,
-                            ExitDate = date,
-                            Contracts = currentPosition.Contracts,
-                            StockEntryPrice = currentPosition.StockEntryPrice,
-                            StockExitPrice = spotPrice,
-                            OptionSymbol = currentPosition.OptionSymbol,
-                            Strike = currentPosition.Strike,
-                            ExpirationDate = currentPosition.ExpirationDate,
-                            EntryDelta = currentPosition.EntryDelta,
-                            EntryProbITM = currentPosition.EntryProbITM,
-                            OptionEntryPremium = currentPosition.OptionEntryPremium,
-                            OptionExitPremium = exitOptionPrice,
-                            NetDebitPaid = currentCostBasisPerShare,
-                            AdjustedCostBasisPerShare = Math.Round(currentCostBasisPerShare, 2),
-                            TotalDebitOutlay = Math.Round(totalCost, 2),
-                            NetCreditReceived = 0m,
-                            RealizedPnlDollars = Math.Round(tradePnl, 2),
-                            ReturnOnCapitalPercent = Math.Round(returnPct, 2),
-                            HoldDays = holdDays,
-                            ExitReason = exitReason,
-                            Notes = $"Defensive roll triggered (Δ{currentDelta:F2}). Bought to close call @ ${exitOptionPrice:F2}. Shares retained at adjusted basis ${currentCostBasisPerShare:F2}."
-                        });
-
-                        // Keep shares, ready to sell replacement defensive call
-                        currentPosition = null;
-                    }
-                    else
-                    {
-                        // StopLossHit or emergency exit: Liquidate entire position to cash
-                        proceeds = (exitStockPrice * ownedShares) 
-                                 - (exitOptionPrice * ownedShares) 
-                                 - (request.CommissionPerContract * 2 * currentPosition.Contracts)
-                                 - (request.SlippagePerContract * ownedShares);
-                        var totalCost = currentCostBasisPerShare * ownedShares;
-                        tradePnl = proceeds - totalCost;
-                        returnPct = totalCost > 0 ? (tradePnl / totalCost) * 100m : 0m;
-
-                        currentCash += proceeds;
-
-                        trades.Add(new BacktestTrade
-                        {
-                            Id = Guid.NewGuid(),
-                            TradeNumber = tradeCounter,
-                            TradeType = currentPosition.TradeType,
-                            EntryDate = currentPosition.EntryDate,
-                            ExitDate = date,
-                            Contracts = currentPosition.Contracts,
-                            StockEntryPrice = currentPosition.StockEntryPrice,
-                            StockExitPrice = exitStockPrice,
-                            OptionSymbol = currentPosition.OptionSymbol,
-                            Strike = currentPosition.Strike,
-                            ExpirationDate = currentPosition.ExpirationDate,
-                            EntryDelta = currentPosition.EntryDelta,
-                            EntryProbITM = currentPosition.EntryProbITM,
-                            OptionEntryPremium = currentPosition.OptionEntryPremium,
-                            OptionExitPremium = exitOptionPrice,
-                            NetDebitPaid = currentCostBasisPerShare,
-                            AdjustedCostBasisPerShare = Math.Round(currentCostBasisPerShare, 2),
-                            TotalDebitOutlay = Math.Round(totalCost, 2),
-                            NetCreditReceived = proceeds / (currentPosition.Contracts * 100m),
-                            RealizedPnlDollars = Math.Round(tradePnl, 2),
-                            ReturnOnCapitalPercent = Math.Round(returnPct, 2),
-                            HoldDays = holdDays,
-                            ExitReason = exitReason,
-                            Notes = $"Liquidated position via {exitReason}. Exit spot: ${exitStockPrice:F2}."
-                        });
-
-                        ownedShares = 0;
-                        currentCostBasisPerShare = 0m;
-                        originalStockEntryPrice = 0m;
+                        // Keep shares, ready to sell next weekly call on Monday
                         currentPosition = null;
                     }
                 }
             }
 
-            // 2. Open new call position if no short call is active
+            // 2. Open new weekly position if no active short call (Enter on Monday / start of weekly cycle)
             if (currentPosition == null)
             {
-                if (ownedShares == 0 && currentCash >= (spotPrice * 100m))
+                // If today is a Friday and position just closed, wait for Monday to open next cycle
+                bool isEntryDay = date.DayOfWeek != DayOfWeek.Friday || candles.Count <= 5;
+
+                if (isEntryDay)
                 {
-                    // SCENARIO 1: Fresh Buy-Write from cash
-                    var chain = await _optionRepo.GetChainAsync(new OptionChainFilter
+                    if (ownedShares == 0 && currentCash >= (spotPrice * 100m))
                     {
-                        Symbol = symbol,
-                        Date = date,
-                        Side = OptionSide.Call,
-                        MinDte = request.MinDte,
-                        MaxDte = request.MaxDte
-                    }, ct);
-
-                    if (chain.Count > 0)
-                    {
-                        var computedChain = chain
-                            .Where(c => c.Strike <= spotPrice)
-                            .Select(c =>
-                            {
-                                var optPrice = c.Mid > 0 ? c.Mid : (c.Last > 0 ? c.Last : Math.Max(0.01m, spotPrice - c.Strike));
-                                var greeks = Core.Calculators.BlackScholesCalculator.ComputeGreeks(
-                                    spotPrice, c.Strike, c.DTE, c.Side, optPrice);
-
-                                var premium = c.Bid > 0 ? c.Bid : c.Mid;
-                                var debit = spotPrice - premium + request.SlippagePerContract;
-                                var downsideBuffer = spotPrice > 0 ? (premium / spotPrice) * 100m : 0m;
-                                var assignmentProfit = c.Strike - debit;
-                                var dte = Math.Max(1, c.DTE);
-                                var annualizedRoc = debit > 0 ? (assignmentProfit / debit) * (365m / dte) * 100m : -999m;
-
-                                c.Delta = greeks.Delta;
-                                c.ImpliedVolatility = greeks.IV;
-
-                                return new
-                                {
-                                    Contract = c,
-                                    Premium = premium,
-                                    NetDebit = debit,
-                                    DownsideBuffer = downsideBuffer,
-                                    AssignmentProfit = assignmentProfit,
-                                    AnnualizedRoc = annualizedRoc,
-                                    Delta = greeks.Delta,
-                                    ProbITM = greeks.ProbabilityOfITM
-                                };
-                            })
-                            .ToList();
-
-                        var candidates = computedChain
-                            .Where(x => x.AssignmentProfit > 0
-                                     && x.DownsideBuffer >= request.MinDownsideBufferPercent
-                                     && x.AnnualizedRoc >= request.MinAnnualizedRocPercent
-                                     && Math.Abs(x.ProbITM - request.TargetDelta) <= request.DeltaTolerance)
-                            .OrderBy(x => Math.Abs(x.ProbITM - request.TargetDelta))
-                            .ThenBy(x => Math.Abs(x.Contract.DTE - request.TargetDte))
-                            .ThenByDescending(x => x.AnnualizedRoc)
-                            .ThenByDescending(x => x.DownsideBuffer)
-                            .ToList();
-
-                        var selected = candidates.FirstOrDefault();
-
-                        if (selected != null)
+                        // SCENARIO 1: Fresh Weekly Buy-Write from Cash
+                        var chain = await _optionRepo.GetChainAsync(new OptionChainFilter
                         {
-                            var candidate = selected.Contract;
-                            var callPremium = selected.Premium;
-                            var netDebitPerShare = selected.NetDebit;
-                            var costPerContract = (netDebitPerShare * 100m) + (request.CommissionPerContract * 2);
+                            Symbol = symbol,
+                            Date = date,
+                            Side = OptionSide.Call,
+                            MinDte = 3,
+                            MaxDte = 8
+                        }, ct);
 
-                            if (costPerContract > 0 && currentCash >= costPerContract)
-                            {
-                                int contracts = 1;
-                                switch (request.SizingMode)
+                        if (chain.Count > 0)
+                        {
+                            var computedChain = chain
+                                .Where(c => c.Strike <= spotPrice)
+                                .Select(c =>
                                 {
-                                    case PositionSizingMode.FixedContracts:
-                                        contracts = Math.Max(1, request.FixedContracts);
-                                        break;
-                                    case PositionSizingMode.FixedDollarBudget:
-                                        var maxBudget = request.FixedDollarBudget > 0 ? request.FixedDollarBudget : 2500m;
-                                        contracts = Math.Max(1, (int)(maxBudget / costPerContract));
-                                        break;
-                                    case PositionSizingMode.PortfolioCompoundingPercent:
-                                        var allocPct = request.AllocationPercent > 0 ? request.AllocationPercent : 0.10m;
-                                        contracts = Math.Max(1, (int)((currentCash * allocPct) / costPerContract));
-                                        break;
-                                    default:
-                                        contracts = 1;
-                                        break;
+                                    var optPrice = c.Mid > 0 ? c.Mid : (c.Last > 0 ? c.Last : Math.Max(0.01m, spotPrice - c.Strike));
+                                    var greeks = Core.Calculators.BlackScholesCalculator.ComputeGreeks(
+                                        spotPrice, c.Strike, c.DTE, c.Side, optPrice);
+
+                                    var premium = c.Bid > 0 ? c.Bid : c.Mid;
+                                    var debit = spotPrice - premium + request.SlippagePerContract;
+                                    var downsideBuffer = spotPrice > 0 ? (premium / spotPrice) * 100m : 0m;
+                                    var assignmentProfit = c.Strike - debit;
+                                    var dte = Math.Max(1, c.DTE);
+                                    var annualizedRoc = debit > 0 ? (assignmentProfit / debit) * (365m / dte) * 100m : -999m;
+
+                                    c.Delta = greeks.Delta;
+                                    c.ImpliedVolatility = greeks.IV;
+
+                                    return new
+                                    {
+                                        Contract = c,
+                                        Premium = premium,
+                                        NetDebit = debit,
+                                        DownsideBuffer = downsideBuffer,
+                                        AssignmentProfit = assignmentProfit,
+                                        AnnualizedRoc = annualizedRoc,
+                                        Delta = greeks.Delta,
+                                        ProbITM = greeks.ProbabilityOfITM
+                                    };
+                                })
+                                .ToList();
+
+                            var candidates = computedChain
+                                .Where(x => x.AssignmentProfit > 0
+                                         && x.DownsideBuffer >= request.MinDownsideBufferPercent
+                                         && x.AnnualizedRoc >= request.MinAnnualizedRocPercent
+                                         && Math.Abs(x.ProbITM - request.TargetDelta) <= request.DeltaTolerance)
+                                .OrderBy(x => Math.Abs(x.ProbITM - request.TargetDelta))
+                                .ThenBy(x => Math.Abs(x.Contract.DTE - 4))
+                                .ThenByDescending(x => x.AnnualizedRoc)
+                                .ThenByDescending(x => x.DownsideBuffer)
+                                .ToList();
+
+                            var selected = candidates.FirstOrDefault();
+
+                            if (selected != null)
+                            {
+                                var candidate = selected.Contract;
+                                var callPremium = selected.Premium;
+                                var netDebitPerShare = selected.NetDebit;
+                                var costPerContract = (netDebitPerShare * 100m) + (request.CommissionPerContract * 2);
+
+                                if (costPerContract > 0 && currentCash >= costPerContract)
+                                {
+                                    int contracts = 1;
+                                    switch (request.SizingMode)
+                                    {
+                                        case PositionSizingMode.FixedContracts:
+                                            contracts = Math.Max(1, request.FixedContracts);
+                                            break;
+                                        case PositionSizingMode.FixedDollarBudget:
+                                            var maxBudget = request.FixedDollarBudget > 0 ? request.FixedDollarBudget : 2500m;
+                                            contracts = Math.Max(1, (int)(maxBudget / costPerContract));
+                                            break;
+                                        case PositionSizingMode.PortfolioCompoundingPercent:
+                                            var allocPct = request.AllocationPercent > 0 ? request.AllocationPercent : 0.10m;
+                                            contracts = Math.Max(1, (int)((currentCash * allocPct) / costPerContract));
+                                            break;
+                                        default:
+                                            contracts = 1;
+                                            break;
+                                    }
+
+                                    int maxAffordable = (int)(currentCash / costPerContract);
+                                    if (contracts > maxAffordable) contracts = maxAffordable;
+                                    if (contracts < 1) contracts = 1;
+
+                                    var totalCost = costPerContract * contracts;
+                                    currentCash -= totalCost;
+
+                                    ownedShares = contracts * 100;
+                                    currentCostBasisPerShare = netDebitPerShare;
+                                    originalStockEntryPrice = spotPrice;
+
+                                    var lifetimeQuotes = await _optionRepo.GetQuotesByOptionSymbolAsync(candidate.OptionSymbol, date, candidate.ExpirationDate, ct);
+                                    var quoteDict = lifetimeQuotes.ToDictionary(
+                                        q => q.SnapshotDate, 
+                                        q => (Mid: q.Mid > 0 ? q.Mid : (q.Last > 0 ? q.Last : Math.Max(0.01m, spotPrice - candidate.Strike)), 
+                                              Delta: q.Delta ?? candidate.Delta ?? request.TargetDelta));
+
+                                    currentPosition = new ActivePosition
+                                    {
+                                        TradeType = BacktestTradeType.BuyWrite,
+                                        EntryDate = date,
+                                        Contracts = contracts,
+                                        StockEntryPrice = spotPrice,
+                                        OptionSymbol = candidate.OptionSymbol,
+                                        Strike = candidate.Strike,
+                                        ExpirationDate = candidate.ExpirationDate,
+                                        EntryDelta = candidate.Delta ?? selected.Delta,
+                                        EntryProbITM = selected.ProbITM,
+                                        OptionEntryPremium = callPremium,
+                                        NetDebitPaid = netDebitPerShare,
+                                        TotalCost = totalCost,
+                                        CachedQuotes = quoteDict
+                                    };
                                 }
+                            }
+                        }
+                    }
+                    else if (ownedShares > 0)
+                    {
+                        // SCENARIO 2: Covered Call against Existing Held Shares
+                        // Charan's Rule #4: Strike MUST be >= currentCostBasisPerShare (Breakeven Defense Rule!)
+                        var chain = await _optionRepo.GetChainAsync(new OptionChainFilter
+                        {
+                            Symbol = symbol,
+                            Date = date,
+                            Side = OptionSide.Call,
+                            MinDte = 3,
+                            MaxDte = 8
+                        }, ct);
 
-                                int maxAffordable = (int)(currentCash / costPerContract);
-                                if (contracts > maxAffordable) contracts = maxAffordable;
-                                if (contracts < 1) contracts = 1;
+                        bool soldCall = false;
 
-                                var totalCost = costPerContract * contracts;
-                                currentCash -= totalCost;
+                        if (chain.Count > 0)
+                        {
+                            var computedChain = chain
+                                .Where(c => c.Strike >= currentCostBasisPerShare) // Charan's Breakeven Rule
+                                .Select(c =>
+                                {
+                                    var optPrice = c.Mid > 0 ? c.Mid : (c.Last > 0 ? c.Last : Math.Max(0.01m, spotPrice - c.Strike));
+                                    var greeks = Core.Calculators.BlackScholesCalculator.ComputeGreeks(
+                                        spotPrice, c.Strike, c.DTE, c.Side, optPrice);
 
-                                ownedShares = contracts * 100;
-                                currentCostBasisPerShare = netDebitPerShare;
-                                originalStockEntryPrice = spotPrice;
+                                    var premium = c.Bid > 0 ? c.Bid : c.Mid;
+                                    var assignmentProfit = c.Strike - (currentCostBasisPerShare - premium);
+                                    var dte = Math.Max(1, c.DTE);
+                                    var annualizedRoc = currentCostBasisPerShare > 0 ? (assignmentProfit / currentCostBasisPerShare) * (365m / dte) * 100m : 0m;
+
+                                    return new
+                                    {
+                                        Contract = c,
+                                        Premium = premium,
+                                        AnnualizedRoc = annualizedRoc,
+                                        Delta = greeks.Delta,
+                                        ProbITM = greeks.ProbabilityOfITM
+                                    };
+                                })
+                                .Where(x => x.Premium > 0)
+                                .OrderBy(x => Math.Abs(x.ProbITM - request.TargetDelta))
+                                .ThenBy(x => Math.Abs(x.Contract.DTE - 4))
+                                .ThenByDescending(x => x.AnnualizedRoc)
+                                .ToList();
+
+                            var selected = computedChain.FirstOrDefault();
+                            if (selected != null)
+                            {
+                                var candidate = selected.Contract;
+                                var callPremium = selected.Premium;
+                                int contracts = ownedShares / 100;
+
+                                var netCredit = (callPremium - request.SlippagePerContract) * ownedShares - (request.CommissionPerContract * contracts);
+                                currentCash += netCredit;
+                                currentCostBasisPerShare -= (callPremium - request.SlippagePerContract); // Further reduces cost basis!
 
                                 var lifetimeQuotes = await _optionRepo.GetQuotesByOptionSymbolAsync(candidate.OptionSymbol, date, candidate.ExpirationDate, ct);
                                 var quoteDict = lifetimeQuotes.ToDictionary(
@@ -444,100 +380,57 @@ public class BacktestEngine : IBacktestEngine
 
                                 currentPosition = new ActivePosition
                                 {
-                                    TradeType = BacktestTradeType.BuyWrite,
+                                    TradeType = BacktestTradeType.CoveredCallNextCycle,
                                     EntryDate = date,
                                     Contracts = contracts,
-                                    StockEntryPrice = spotPrice,
+                                    StockEntryPrice = originalStockEntryPrice > 0 ? originalStockEntryPrice : spotPrice,
                                     OptionSymbol = candidate.OptionSymbol,
                                     Strike = candidate.Strike,
                                     ExpirationDate = candidate.ExpirationDate,
                                     EntryDelta = candidate.Delta ?? selected.Delta,
                                     EntryProbITM = selected.ProbITM,
                                     OptionEntryPremium = callPremium,
-                                    NetDebitPaid = netDebitPerShare,
-                                    TotalCost = totalCost,
+                                    NetDebitPaid = currentCostBasisPerShare,
+                                    TotalCost = currentCostBasisPerShare * ownedShares,
                                     CachedQuotes = quoteDict
                                 };
+
+                                soldCall = true;
                             }
                         }
-                    }
-                }
-                else if (ownedShares > 0)
-                {
-                    // SCENARIO 2: Covered Call against Existing Held Shares
-                    // Charan's Rule #4: Strike MUST be >= currentCostBasisPerShare (Breakeven Defense Rule!)
-                    var chain = await _optionRepo.GetChainAsync(new OptionChainFilter
-                    {
-                        Symbol = symbol,
-                        Date = date,
-                        Side = OptionSide.Call,
-                        MinDte = request.MinDte,
-                        MaxDte = request.MaxDte
-                    }, ct);
 
-                    if (chain.Count > 0)
-                    {
-                        var computedChain = chain
-                            .Where(c => c.Strike >= currentCostBasisPerShare) // Charan's Breakeven Rule
-                            .Select(c =>
-                            {
-                                var optPrice = c.Mid > 0 ? c.Mid : (c.Last > 0 ? c.Last : Math.Max(0.01m, spotPrice - c.Strike));
-                                var greeks = Core.Calculators.BlackScholesCalculator.ComputeGreeks(
-                                    spotPrice, c.Strike, c.DTE, c.Side, optPrice);
-
-                                var premium = c.Bid > 0 ? c.Bid : c.Mid;
-                                var assignmentProfit = c.Strike - (currentCostBasisPerShare - premium);
-                                var dte = Math.Max(1, c.DTE);
-                                var annualizedRoc = currentCostBasisPerShare > 0 ? (assignmentProfit / currentCostBasisPerShare) * (365m / dte) * 100m : 0m;
-
-                                return new
-                                {
-                                    Contract = c,
-                                    Premium = premium,
-                                    AnnualizedRoc = annualizedRoc,
-                                    Delta = greeks.Delta,
-                                    ProbITM = greeks.ProbabilityOfITM
-                                };
-                            })
-                            .Where(x => x.Premium > 0)
-                            .OrderBy(x => Math.Abs(x.ProbITM - request.TargetDelta))
-                            .ThenBy(x => Math.Abs(x.Contract.DTE - request.TargetDte))
-                            .ThenByDescending(x => x.AnnualizedRoc)
-                            .ToList();
-
-                        var selected = computedChain.FirstOrDefault();
-                        if (selected != null)
+                        // If no strike >= cost basis exists on Monday, log a NO TRADE OPPORTUNITY week (held shares unhedged)
+                        if (!soldCall && (lastNoTradeLoggedDate == null || date.DayNumber - lastNoTradeLoggedDate.Value.DayNumber >= 5))
                         {
-                            var candidate = selected.Contract;
-                            var callPremium = selected.Premium;
-                            int contracts = ownedShares / 100;
-
-                            var netCredit = (callPremium - request.SlippagePerContract) * ownedShares - (request.CommissionPerContract * contracts);
-                            currentCash += netCredit;
-                            currentCostBasisPerShare -= (callPremium - request.SlippagePerContract); // Further reduces cost basis!
-
-                            var lifetimeQuotes = await _optionRepo.GetQuotesByOptionSymbolAsync(candidate.OptionSymbol, date, candidate.ExpirationDate, ct);
-                            var quoteDict = lifetimeQuotes.ToDictionary(
-                                q => q.SnapshotDate, 
-                                q => (Mid: q.Mid > 0 ? q.Mid : (q.Last > 0 ? q.Last : Math.Max(0.01m, spotPrice - candidate.Strike)), 
-                                      Delta: q.Delta ?? candidate.Delta ?? request.TargetDelta));
-
-                            currentPosition = new ActivePosition
+                            lastNoTradeLoggedDate = date;
+                            tradeCounter++;
+                            trades.Add(new BacktestTrade
                             {
-                                TradeType = BacktestTradeType.CoveredCallNextCycle,
+                                Id = Guid.NewGuid(),
+                                TradeNumber = tradeCounter,
+                                TradeType = BacktestTradeType.NoTradeOpportunity,
                                 EntryDate = date,
-                                Contracts = contracts,
+                                ExitDate = date.AddDays(4),
+                                Contracts = ownedShares / 100,
                                 StockEntryPrice = originalStockEntryPrice > 0 ? originalStockEntryPrice : spotPrice,
-                                OptionSymbol = candidate.OptionSymbol,
-                                Strike = candidate.Strike,
-                                ExpirationDate = candidate.ExpirationDate,
-                                EntryDelta = candidate.Delta ?? selected.Delta,
-                                EntryProbITM = selected.ProbITM,
-                                OptionEntryPremium = callPremium,
+                                StockExitPrice = spotPrice,
+                                OptionSymbol = "NO_STRIKE_ABOVE_BASIS",
+                                Strike = Math.Round(currentCostBasisPerShare, 2),
+                                ExpirationDate = date.AddDays(4),
+                                EntryDelta = 0m,
+                                EntryProbITM = 0m,
+                                OptionEntryPremium = 0m,
+                                OptionExitPremium = 0m,
                                 NetDebitPaid = currentCostBasisPerShare,
-                                TotalCost = currentCostBasisPerShare * ownedShares,
-                                CachedQuotes = quoteDict
-                            };
+                                AdjustedCostBasisPerShare = Math.Round(currentCostBasisPerShare, 2),
+                                TotalDebitOutlay = Math.Round(currentCostBasisPerShare * ownedShares, 2),
+                                NetCreditReceived = 0m,
+                                RealizedPnlDollars = 0m,
+                                ReturnOnCapitalPercent = 0m,
+                                HoldDays = 5,
+                                ExitReason = ExitReason.NoTradeOpportunity,
+                                Notes = $"NO TRADE OPPORTUNITY: Stock (${spotPrice:F2}) is below cost basis (${currentCostBasisPerShare:F2}). Held shares unhedged to avoid locking in a loss."
+                            });
                         }
                     }
                 }
@@ -582,7 +475,7 @@ public class BacktestEngine : IBacktestEngine
             });
         }
 
-        // Close any lingering open position at end of backtest period
+        // Close lingering open position at end of backtest period
         if (ownedShares > 0 && candles.Count > 0)
         {
             tradeCounter++;
