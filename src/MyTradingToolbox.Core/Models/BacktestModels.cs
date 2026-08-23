@@ -75,6 +75,8 @@ public class BacktestTrade
     public decimal RealizedPnlDollars { get; set; }
     public decimal ReturnOnCapitalPercent { get; set; }
     public int HoldDays { get; set; }
+    public BacktestTradeType TradeType { get; set; } = BacktestTradeType.BuyWrite;
+    public decimal AdjustedCostBasisPerShare { get; set; }
     public ExitReason ExitReason { get; set; }
     public string Notes { get; set; } = string.Empty;
 }

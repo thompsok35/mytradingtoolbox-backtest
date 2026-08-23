@@ -60,6 +60,7 @@ public class CoveredCallBacktestTests
         result.Metrics.TotalTrades.Should().BeGreaterThan(0);
         result.DailyEquityCurve.Should().NotBeEmpty();
         result.Trades.All(t => t.EntryProbITM > 0).Should().BeTrue();
+        result.Trades.All(t => t.AdjustedCostBasisPerShare > 0).Should().BeTrue();
     }
 
     [Theory]

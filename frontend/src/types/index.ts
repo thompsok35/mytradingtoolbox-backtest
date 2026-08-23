@@ -195,6 +195,8 @@ export interface BacktestTrade {
   netPnL?: number;
   realizedPnlDollars?: number;
   returnOnCapitalPercent?: number;
+  tradeType?: 'BuyWrite' | 'CoveredCallRoll' | 'CoveredCallNextCycle' | string;
+  adjustedCostBasisPerShare?: number;
   exitReason: ExitReason | string;
   notes?: string;
 }

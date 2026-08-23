@@ -1,4 +1,4 @@
-﻿namespace MyTradingToolbox.Core.Enums;
+namespace MyTradingToolbox.Core.Enums;
 
 public enum AssetType
 {
@@ -62,3 +62,11 @@ public enum ExitReason
     DteThresholdExit,
     ManualClose
 }
+
+public enum BacktestTradeType
+{
+    BuyWrite,
+    CoveredCallRoll,
+    CoveredCallNextCycle
+}
+

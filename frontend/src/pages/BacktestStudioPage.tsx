@@ -492,20 +492,33 @@ export const BacktestStudioPage: React.FC = () => {
                   <thead className="bg-slate-800/70 text-slate-400 uppercase tracking-wider font-semibold sticky top-0 border-b border-slate-800">
                     <tr>
                       <th className="py-2.5 px-3">#</th>
+                      <th className="py-2.5 px-3">Type</th>
                       <th className="py-2.5 px-3">Dates</th>
                       <th className="py-2.5 px-3">Strike & Exp</th>
                       <th className="py-2.5 px-3">Contracts</th>
-                      <th className="py-2.5 px-3">Debit / Sh</th>
+                      <th className="py-2.5 px-3">Cost Basis / Sh</th>
                       <th className="py-2.5 px-3">Total Outlay</th>
                       <th className="py-2.5 px-3">Realized ROC</th>
-                      <th className="py-2.5 px-3">Total Net P&L</th>
-                      <th className="py-2.5 px-3">Exit Reason</th>
+                      <th className="py-2.5 px-3">Net P&L</th>
+                      <th className="py-2.5 px-3">Outcome</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 font-mono text-slate-300">
                     {result.trades.map(trade => (
                       <tr key={trade.id} className="hover:bg-slate-800/50 transition cursor-help" title={trade.notes || undefined}>
                         <td className="py-2.5 px-3 font-semibold text-slate-400">{trade.tradeNumber}</td>
+                        <td className="py-2.5 px-3 font-sans">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${
+                            trade.tradeType === 'BuyWrite' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
+                            trade.tradeType === 'CoveredCallNextCycle' ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30' :
+                            trade.tradeType === 'CoveredCallRoll' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
+                            'bg-slate-800 text-slate-400'
+                          }`}>
+                            {trade.tradeType === 'BuyWrite' ? 'Buy-Write' :
+                             trade.tradeType === 'CoveredCallNextCycle' ? 'Covered Call' :
+                             trade.tradeType === 'CoveredCallRoll' ? 'Call Roll' : 'Cycle'}
+                          </span>
+                        </td>
                         <td className="py-2.5 px-3 text-[11px]">
                           {trade.entryDate} → {trade.exitDate} <span className="text-slate-500">({trade.holdDays}d)</span>
                         </td>
@@ -525,7 +538,7 @@ export const BacktestStudioPage: React.FC = () => {
                           </span>
                         </td>
                         <td className="py-2.5 px-3 text-slate-300">
-                          ${trade.netDebitPaid ? trade.netDebitPaid.toFixed(2) : ((trade.stockEntryPrice - trade.optionEntryPremium)).toFixed(2)}
+                          ${trade.adjustedCostBasisPerShare !== undefined && trade.adjustedCostBasisPerShare > 0 ? trade.adjustedCostBasisPerShare.toFixed(2) : (trade.netDebitPaid ? trade.netDebitPaid.toFixed(2) : ((trade.stockEntryPrice - trade.optionEntryPremium)).toFixed(2))}
                         </td>
                         <td className="py-2.5 px-3 text-amber-300 font-semibold">
                           ${trade.totalDebitOutlay ? trade.totalDebitOutlay.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : ((trade.netDebitPaid || (trade.stockEntryPrice - trade.optionEntryPremium)) * trade.contracts * 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
@@ -540,10 +553,11 @@ export const BacktestStudioPage: React.FC = () => {
                           <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
                             trade.exitReason === 'ProfitTargetHit' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
                             trade.exitReason === 'Assignment' ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30' :
+                            trade.exitReason === 'Expiration' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' :
                             trade.exitReason === 'DeltaBreachRoll' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
                             'bg-slate-800 text-slate-400'
                           }`}>
-                            {trade.exitReason}
+                            {trade.exitReason === 'Expiration' ? 'Unassigned (100% Prem Kept)' : trade.exitReason}
                           </span>
                         </td>
                       </tr>
