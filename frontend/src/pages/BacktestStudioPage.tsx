@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Play, TrendingUp, DollarSign, Percent, Shield, ArrowUpRight, ArrowDownRight, Layers, Sliders, CheckCircle, Calculator, Sparkles, HelpCircle } from 'lucide-react';
+import { Play, TrendingUp, DollarSign, Percent, Shield, ArrowUpRight, ArrowDownRight, Layers, Sliders, CheckCircle, Calculator, Sparkles, HelpCircle, Download, Copy, FileSpreadsheet } from 'lucide-react';
 import { MarketApi } from '../services/api';
 import { BacktestRequest, BacktestResult, WatchlistSymbol, PositionSizingMode } from '../types';
 import { EquityCurveChart } from '../components/EquityCurveChart';
@@ -10,6 +10,7 @@ export const BacktestStudioPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // Strategy Parameters
   // Strategy Parameters - Aligned with itmCCbot defaults
@@ -106,6 +107,126 @@ export const BacktestStudioPage: React.FC = () => {
     setTimeout(() => {
       handleRunBacktest();
     }, 50);
+  };
+
+  const handleExportCSV = () => {
+    if (!result || result.trades.length === 0) return;
+
+    const headers = [
+      'Trade #',
+      'Type',
+      'Entry Date',
+      'Exit Date',
+      'Hold Days',
+      'Strike',
+      'Option Symbol',
+      'Expiration Date',
+      'ITM Prob (%)',
+      'Delta',
+      'Contracts',
+      'Cost Basis / Sh ($)',
+      'Total Outlay ($)',
+      'Realized ROC (%)',
+      'Realized Net P&L ($)',
+      'Commissions ($)',
+      'Slippage ($)',
+      'Outcome',
+      'Notes'
+    ];
+
+    const rows = result.trades.map(t => [
+      t.tradeNumber,
+      t.tradeType === 'BuyWrite' ? 'Buy-Write' : t.tradeType === 'CoveredCallNextCycle' ? 'Covered Call' : t.tradeType === 'NoTradeOpportunity' ? 'No Trade' : (t.tradeType || 'Cycle'),
+      t.entryDate,
+      t.exitDate,
+      t.holdDays,
+      t.strike.toFixed(2),
+      t.optionSymbol,
+      t.expirationDate || '',
+      t.entryProbITM ? (t.entryProbITM * 100).toFixed(0) + '%' : '',
+      t.entryDelta ? t.entryDelta.toFixed(2) : '',
+      t.contracts,
+      (t.adjustedCostBasisPerShare ?? t.netDebitPaid ?? 0).toFixed(2),
+      (t.totalDebitOutlay ?? 0).toFixed(2),
+      (t.returnOnCapitalPercent ?? 0).toFixed(2) + '%',
+      (t.realizedPnlDollars ?? 0).toFixed(2),
+      (t.commissionsPaid ?? 0).toFixed(2),
+      (t.slippagePaid ?? 0).toFixed(2),
+      t.exitReason === 'Expiration' ? 'Unassigned (100% Prem Kept)' : t.exitReason === 'Assignment' ? 'Assigned (Friday Close >= Strike)' : t.exitReason === 'NoTradeOpportunity' ? 'No Trade Opportunity (Held)' : t.exitReason,
+      `"${(t.notes || '').replace(/"/g, '""')}"`
+    ]);
+
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(r => r.join(','))
+    ].join('\r\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `${result.symbol}_ITM_CoveredCall_Trades_${result.startDate}_to_${result.endDate}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopyTSV = () => {
+    if (!result || result.trades.length === 0) return;
+
+    const headers = [
+      'Trade #',
+      'Type',
+      'Entry Date',
+      'Exit Date',
+      'Hold Days',
+      'Strike',
+      'Option Symbol',
+      'Expiration Date',
+      'ITM Prob (%)',
+      'Delta',
+      'Contracts',
+      'Cost Basis / Sh ($)',
+      'Total Outlay ($)',
+      'Realized ROC (%)',
+      'Realized Net P&L ($)',
+      'Commissions ($)',
+      'Slippage ($)',
+      'Outcome',
+      'Notes'
+    ];
+
+    const rows = result.trades.map(t => [
+      t.tradeNumber,
+      t.tradeType === 'BuyWrite' ? 'Buy-Write' : t.tradeType === 'CoveredCallNextCycle' ? 'Covered Call' : t.tradeType === 'NoTradeOpportunity' ? 'No Trade' : (t.tradeType || 'Cycle'),
+      t.entryDate,
+      t.exitDate,
+      t.holdDays,
+      t.strike.toFixed(2),
+      t.optionSymbol,
+      t.expirationDate || '',
+      t.entryProbITM ? (t.entryProbITM * 100).toFixed(0) + '%' : '',
+      t.entryDelta ? t.entryDelta.toFixed(2) : '',
+      t.contracts,
+      (t.adjustedCostBasisPerShare ?? t.netDebitPaid ?? 0).toFixed(2),
+      (t.totalDebitOutlay ?? 0).toFixed(2),
+      (t.returnOnCapitalPercent ?? 0).toFixed(2) + '%',
+      (t.realizedPnlDollars ?? 0).toFixed(2),
+      (t.commissionsPaid ?? 0).toFixed(2),
+      (t.slippagePaid ?? 0).toFixed(2),
+      t.exitReason === 'Expiration' ? 'Unassigned (100% Prem Kept)' : t.exitReason === 'Assignment' ? 'Assigned (Friday Close >= Strike)' : t.exitReason === 'NoTradeOpportunity' ? 'No Trade Opportunity (Held)' : t.exitReason,
+      t.notes || ''
+    ]);
+
+    const tsvContent = [
+      headers.join('\t'),
+      ...rows.map(r => r.join('\t'))
+    ].join('\r\n');
+
+    navigator.clipboard.writeText(tsvContent);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
   };
 
   const metrics = result?.metrics;
@@ -523,7 +644,7 @@ export const BacktestStudioPage: React.FC = () => {
           {/* Trade Log Table with Contracts and Outlay Columns */}
           {result && (
             <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
-              <div className="flex items-center justify-between mb-4">
+              <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                 <div>
                   <h3 className="text-sm font-bold text-slate-100 flex items-center space-x-2">
                     <span>Executed Trades Breakdown ({result.trades.length} completed cycles)</span>
@@ -532,9 +653,29 @@ export const BacktestStudioPage: React.FC = () => {
                     </span>
                   </h3>
                 </div>
-                <span className="text-xs text-slate-400 font-mono">
-                  Profit Factor: <strong className="text-emerald-400">{metrics?.profitFactor}</strong>
-                </span>
+                <div className="flex items-center space-x-2">
+                  <span className="text-xs text-slate-400 font-mono mr-2">
+                    Profit Factor: <strong className="text-emerald-400">{metrics?.profitFactor}</strong>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleExportCSV}
+                    className="flex items-center space-x-1.5 px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 border border-emerald-500/40 rounded-lg text-xs font-semibold transition shadow-sm"
+                    title="Download CSV spreadsheet for Microsoft Excel or Google Sheets"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Export to Excel / Sheets</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyTSV}
+                    className="flex items-center space-x-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-semibold transition"
+                    title="Copy table data to clipboard for direct pasting into Google Sheets or Excel"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>{copied ? '✓ Copied!' : 'Copy to Clipboard'}</span>
+                  </button>
+                </div>
               </div>
 
               <div className="overflow-x-auto max-h-80">
