@@ -31,10 +31,10 @@ export const BacktestStudioPage: React.FC = () => {
   const [targetDte, setTargetDte] = useState(7);
   const [minDte, setMinDte] = useState(7);
   const [maxDte, setMaxDte] = useState(13);
-  const [rollOnDeltaBreach, setRollOnDeltaBreach] = useState(true);
+  const [rollOnDeltaBreach, setRollOnDeltaBreach] = useState(false);
   const [rollDeltaThreshold, setRollDeltaThreshold] = useState(0.50);
-  const [slippage, setSlippage] = useState(0.02);
-  const [commission, setCommission] = useState(0.65);
+  const [slippage, setSlippage] = useState(0.01);
+  const [commission, setCommission] = useState(0.00); // Default to Tradier flat $10/mo ($0/contract)
 
   useEffect(() => {
     const fetchSymbols = async () => {
@@ -404,6 +404,41 @@ export const BacktestStudioPage: React.FC = () => {
               </div>
             </div>
 
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <div className="flex justify-between text-slate-400 mb-1 text-[11px]">
+                  <span>Commission / Ctr</span>
+                  <span className="text-blue-400 font-mono font-semibold">${commission.toFixed(2)}</span>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  max="10"
+                  step="0.05"
+                  value={commission}
+                  onChange={e => setCommission(parseFloat(e.target.value) || 0)}
+                  className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white font-mono text-xs"
+                />
+                <span className="text-[9px] text-slate-500 block mt-0.5">Tradier: $0.00 / ctr ($10/mo flat)</span>
+              </div>
+              <div>
+                <div className="flex justify-between text-slate-400 mb-1 text-[11px]">
+                  <span>Slippage / Sh</span>
+                  <span className="text-amber-400 font-mono font-semibold">${slippage.toFixed(2)}</span>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  max="0.50"
+                  step="0.01"
+                  value={slippage}
+                  onChange={e => setSlippage(parseFloat(e.target.value) || 0)}
+                  className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white font-mono text-xs"
+                />
+                <span className="text-[9px] text-slate-500 block mt-0.5">$0.01 = $1.00/contract</span>
+              </div>
+            </div>
+
             <div className="p-2.5 bg-emerald-950/30 border border-emerald-800/40 rounded-lg flex items-center justify-between">
               <div>
                 <span className="text-[11px] font-bold text-emerald-400 block">Harvest Mode: Full Expiration Cycle</span>
@@ -430,37 +465,52 @@ export const BacktestStudioPage: React.FC = () => {
           
           {/* Key Metric Scorecard */}
           {metrics && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg">
-                <span className="text-xs text-slate-400 font-medium">Total Return</span>
-                <p className={`text-xl font-bold font-mono mt-1 ${metrics.totalReturnPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                  {metrics.totalReturnPercent >= 0 ? '+' : ''}{metrics.totalReturnPercent.toFixed(2)}%
-                </p>
-                <p className="text-[11px] text-slate-500 mt-0.5">${metrics.totalNetProfit.toLocaleString()} Net P&L</p>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg">
+                  <span className="text-xs text-slate-400 font-medium">Total Return</span>
+                  <p className={`text-xl font-bold font-mono mt-1 ${metrics.totalReturnPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {metrics.totalReturnPercent >= 0 ? '+' : ''}{metrics.totalReturnPercent.toFixed(2)}%
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">${metrics.totalNetProfit.toLocaleString()} Net P&L</p>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg">
+                  <span className="text-xs text-slate-400 font-medium">Win Rate</span>
+                  <p className="text-xl font-bold font-mono text-emerald-400 mt-1">
+                    {metrics.winRatePercent.toFixed(1)}%
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">{metrics.winningTrades}W / {metrics.losingTrades}L ({metrics.totalTrades} total)</p>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg">
+                  <span className="text-xs text-slate-400 font-medium">Avg Profit / Trade</span>
+                  <p className="text-xl font-bold font-mono text-blue-400 mt-1">
+                    ${(metrics.averageTradePnl || 0).toFixed(2)}
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">Hold: {(metrics?.averageHoldDays || 0).toFixed(1)}d per cycle</p>
+                </div>
+
+                <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg">
+                  <span className="text-xs text-slate-400 font-medium">Sharpe Ratio</span>
+                  <p className="text-xl font-bold font-mono text-purple-400 mt-1">
+                    {metrics.sharpeRatio.toFixed(2)}
+                  </p>
+                  <p className="text-[11px] text-rose-400 mt-0.5">Max DD: -{metrics.maxDrawdownPercent.toFixed(2)}%</p>
+                </div>
               </div>
 
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg">
-                <span className="text-xs text-slate-400 font-medium">Win Rate</span>
-                <p className="text-xl font-bold font-mono text-emerald-400 mt-1">
-                  {metrics.winRatePercent.toFixed(1)}%
-                </p>
-                <p className="text-[11px] text-slate-500 mt-0.5">{metrics.winningTrades}W / {metrics.losingTrades}L ({metrics.totalTrades} total)</p>
-              </div>
-
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg">
-                <span className="text-xs text-slate-400 font-medium">Avg Trade ROC</span>
-                <p className="text-xl font-bold font-mono text-blue-400 mt-1">
-                  +{metrics?.averageWinningTradePnl && metrics.averageWinningTradePnl > 0 ? ((metrics.averageTradePnl || 0) / Math.max(1, metrics.averageWinningTradePnl) * 100).toFixed(1) : '0'}%
-                </p>
-                <p className="text-[11px] text-slate-500 mt-0.5">Hold: {(metrics?.averageHoldDays || 0).toFixed(1)}d per cycle</p>
-              </div>
-
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg">
-                <span className="text-xs text-slate-400 font-medium">Sharpe Ratio</span>
-                <p className="text-xl font-bold font-mono text-purple-400 mt-1">
-                  {metrics.sharpeRatio.toFixed(2)}
-                </p>
-                <p className="text-[11px] text-rose-400 mt-0.5">Max DD: -{metrics.maxDrawdownPercent.toFixed(2)}%</p>
+              {/* Friction & Net vs Gross Breakdown Bar */}
+              <div className="bg-slate-900/90 border border-slate-800/80 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+                <div className="flex items-center space-x-2">
+                  <span className="text-slate-400 font-sans font-semibold">💰 P&L Breakdown:</span>
+                  <span className="text-slate-300">Gross: <strong className="text-emerald-400">${(metrics.grossProfit ?? metrics.totalNetProfit).toFixed(2)}</strong></span>
+                </div>
+                <div className="flex items-center space-x-4">
+                  <span className="text-slate-400">Commissions: <strong className="text-blue-400">${(metrics.totalCommissionsPaid ?? 0).toFixed(2)}</strong></span>
+                  <span className="text-slate-400">Slippage: <strong className="text-amber-400">${(metrics.totalSlippagePaid ?? 0).toFixed(2)}</strong></span>
+                  <span className="text-slate-300 border-l border-slate-700 pl-4">Net Realized: <strong className="text-emerald-400 font-bold">${metrics.totalNetProfit.toFixed(2)}</strong></span>
+                </div>
               </div>
             </div>
           )}

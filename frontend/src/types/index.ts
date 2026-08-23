@@ -195,8 +195,10 @@ export interface BacktestTrade {
   netPnL?: number;
   realizedPnlDollars?: number;
   returnOnCapitalPercent?: number;
-  tradeType?: 'BuyWrite' | 'CoveredCallRoll' | 'CoveredCallNextCycle' | string;
+  tradeType?: 'BuyWrite' | 'CoveredCallRoll' | 'CoveredCallNextCycle' | 'NoTradeOpportunity' | string;
   adjustedCostBasisPerShare?: number;
+  commissionsPaid?: number;
+  slippagePaid?: number;
   exitReason: ExitReason | string;
   notes?: string;
 }
@@ -224,6 +226,9 @@ export interface PerformanceMetrics {
   winRate: number;
   winRatePercent: number;
   totalNetProfit: number;
+  grossProfit?: number;
+  totalCommissionsPaid?: number;
+  totalSlippagePaid?: number;
   totalReturnPercent: number;
   cagrPercent: number;
   benchmarkReturnPercent?: number;

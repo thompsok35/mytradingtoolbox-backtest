@@ -130,6 +130,8 @@ public class BacktestEngine : IBacktestEngine
                             RealizedPnlDollars = Math.Round(tradePnl, 2),
                             ReturnOnCapitalPercent = Math.Round(returnPct, 2),
                             HoldDays = holdDays,
+                            CommissionsPaid = request.CommissionPerContract * currentPosition.Contracts,
+                            SlippagePaid = request.SlippagePerContract * ownedShares,
                             ExitReason = ExitReason.Assignment,
                             Notes = $"Assigned at strike ${currentPosition.Strike:F2} (Friday Close: ${spotPrice:F2}). Cost basis was ${currentCostBasisPerShare:F2}. Realized {(tradePnl >= 0 ? "+" : "")}${tradePnl:F2} profit."
                         });
@@ -174,6 +176,8 @@ public class BacktestEngine : IBacktestEngine
                             RealizedPnlDollars = Math.Round(tradePnl, 2),
                             ReturnOnCapitalPercent = Math.Round(returnPct, 2),
                             HoldDays = holdDays,
+                            CommissionsPaid = request.CommissionPerContract * currentPosition.Contracts,
+                            SlippagePaid = 0m,
                             ExitReason = ExitReason.Expiration,
                             Notes = $"Unassigned at Friday expiration (Close: ${spotPrice:F2} < Strike ${currentPosition.Strike:F2}). Kept 100% premium (${currentPosition.OptionEntryPremium:F2}/sh). Shares retained at basis ${currentCostBasisPerShare:F2}."
                         });
@@ -590,11 +594,18 @@ public class BacktestEngine : IBacktestEngine
         decimal profitFactor = totalLosses > 0 ? Math.Round(totalGains / totalLosses, 2) : totalGains > 0 ? 99.99m : 1m;
         decimal winRate = totalTrades > 0 ? Math.Round(((decimal)winning.Count / totalTrades) * 100m, 2) : 0m;
 
+        decimal totalCommissions = trades.Sum(t => t.CommissionsPaid);
+        decimal totalSlippage = trades.Sum(t => t.SlippagePaid);
+        decimal grossProfit = totalProfit + totalCommissions + totalSlippage;
+
         return new PerformanceMetrics
         {
             InitialCapital = initialCapital,
             FinalEquity = Math.Round(finalEquity, 2),
             TotalNetProfit = Math.Round(totalProfit, 2),
+            GrossProfit = Math.Round(grossProfit, 2),
+            TotalCommissionsPaid = Math.Round(totalCommissions, 2),
+            TotalSlippagePaid = Math.Round(totalSlippage, 2),
             TotalReturnPercent = Math.Round(totalReturnPct, 2),
             CAGRPercent = Math.Round(cagrPct, 2),
             BenchmarkReturnPercent = Math.Round(benchmarkReturnPct, 2),

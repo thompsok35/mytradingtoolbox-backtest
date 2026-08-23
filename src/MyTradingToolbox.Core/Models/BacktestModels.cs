@@ -36,8 +36,8 @@ public class BacktestRequest
     public bool RollOnDeltaBreach { get; set; } = true;
     public decimal RollDeltaThreshold { get; set; } = 0.50m; // Roll if delta drops below 0.50 (loses ITM safety)
     public int CloseDteThreshold { get; set; } = 2; // Close/roll 2 days prior to expiration to avoid pin risk
-    public decimal SlippagePerContract { get; set; } = 0.02m;
-    public decimal CommissionPerContract { get; set; } = 0.65m;
+    public decimal SlippagePerContract { get; set; } = 0.01m;
+    public decimal CommissionPerContract { get; set; } = 0.00m; // Tradier $10/mo flat fee model ($0/contract)
 }
 
 public class BacktestResult
@@ -77,6 +77,8 @@ public class BacktestTrade
     public int HoldDays { get; set; }
     public BacktestTradeType TradeType { get; set; } = BacktestTradeType.BuyWrite;
     public decimal AdjustedCostBasisPerShare { get; set; }
+    public decimal CommissionsPaid { get; set; }
+    public decimal SlippagePaid { get; set; }
     public ExitReason ExitReason { get; set; }
     public string Notes { get; set; } = string.Empty;
 }
@@ -98,6 +100,9 @@ public class PerformanceMetrics
     public decimal InitialCapital { get; set; }
     public decimal FinalEquity { get; set; }
     public decimal TotalNetProfit { get; set; }
+    public decimal GrossProfit { get; set; }
+    public decimal TotalCommissionsPaid { get; set; }
+    public decimal TotalSlippagePaid { get; set; }
     public decimal TotalReturnPercent { get; set; }
     public decimal CAGRPercent { get; set; }
     public decimal BenchmarkReturnPercent { get; set; }
