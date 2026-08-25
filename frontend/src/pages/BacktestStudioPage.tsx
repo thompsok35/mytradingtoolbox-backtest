@@ -425,7 +425,7 @@ export const BacktestStudioPage: React.FC = () => {
               </div>
               <input
                 type="range"
-                min="0.50"
+                min="0.05"
                 max="0.95"
                 step="0.05"
                 value={targetDelta}
@@ -472,7 +472,7 @@ export const BacktestStudioPage: React.FC = () => {
                   type="number"
                   min="0"
                   max="500"
-                  step="5"
+                  step="0.05"
                   value={minAnnualizedRoc}
                   onChange={e => setMinAnnualizedRoc(parseFloat(e.target.value) || 0)}
                   className="w-full px-2 py-1.5 bg-slate-800 border border-slate-700 rounded-lg text-white font-mono text-xs"
